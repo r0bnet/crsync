@@ -1,0 +1,13 @@
+# Sample CRSyncTest CR for triggering a reconciliation during local development.
+#
+# Apply to a spoke cluster:
+#   kubectl apply --context kind-crsyncspoke1 -f config/samples/crsynctest-cr.yaml
+apiVersion: crsync.test.io/v1alpha1
+kind: CRSyncTest
+metadata:
+  name: example
+  namespace: default
+spec:
+  message: "hello from spoke"
+  replicas: 3
+  enabled: true

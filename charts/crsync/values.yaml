@@ -1,0 +1,65 @@
+image:
+  registry: r0bnet/crsync
+  tag: latest
+  pullPolicy: IfNotPresent
+
+replicas: 1
+
+leaderElection:
+  enabled: true
+
+metrics:
+  bindAddress: ":8080"
+
+probes:
+  bindAddress: ":8081"
+
+kubeconfig:
+  namespace: kubeconfigs
+  secretLabel: "" # default: sigs.k8s.io/multicluster-runtime-kubeconfig
+  secretKey: "" # default: kubeconfig
+
+concurrency:
+  # hub: max concurrent reconciles for hub-side controllers (resource sync from hub and secret sync from hub to spokes).
+  hub: 1
+  # spoke: max concurrent reconciles for spoke-side controllers (resource sync from spoke clusters to hub).
+  spoke: 1
+
+resources:
+  requests:
+    cpu: 50m
+    memory: 128Mi
+  limits:
+    memory: 256Mi
+
+securityContext:
+  runAsNonRoot: true
+  runAsUser: 1000
+
+containerSecurityContext:
+  allowPrivilegeEscalation: false
+  readOnlyRootFilesystem: true
+  capabilities:
+    drop:
+      - ALL
+
+config:
+  # resources: list of GVKs to sync. Each entry needs group, kind, and resource (plural API name).
+  # version is optional; when empty, all versions are discovered from the API server.
+  # resource is required for RBAC rule generation (the plural lowercase API resource name).
+  resources: []
+  #  - group: "crsync.test.io"
+  #    version: "v1alpha1"
+  #    kind: "CRSyncTest"
+  #    resource: "crsynctests"
+  # secretTypes: optional list of Secret types the secret controller should reconcile
+  # (e.g. "Opaque", "kubernetes.io/tls"). When empty, all Secret types are synced from hub to spokes.
+  secretTypes: []
+  #  - "connection.crossplane.io/v1alpha1"
+
+serviceAccount:
+  name: crsync-controller-manager
+  annotations: {}
+
+networkPolicy:
+  enabled: false

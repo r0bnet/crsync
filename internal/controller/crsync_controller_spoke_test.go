@@ -1,0 +1,335 @@
+package controller
+
+import (
+	"context"
+	"fmt"
+	"testing"
+
+	corev1 "k8s.io/api/core/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+	"k8s.io/apimachinery/pkg/runtime/schema"
+	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/client/fake"
+	"sigs.k8s.io/controller-runtime/pkg/cluster"
+	"sigs.k8s.io/controller-runtime/pkg/reconcile"
+	"sigs.k8s.io/multicluster-runtime/pkg/multicluster"
+	mcreconcile "sigs.k8s.io/multicluster-runtime/pkg/reconcile"
+)
+
+// fakeClusterProvider implements ClusterProvider by mapping cluster names to
+// pre-built fake clusters.
+type fakeClusterProvider struct {
+	clusters map[string]cluster.Cluster
+}
+
+func (f *fakeClusterProvider) GetCluster(_ context.Context, name multicluster.ClusterName) (cluster.Cluster, error) {
+	cl, ok := f.clusters[string(name)]
+	if !ok {
+		return nil, fmt.Errorf("cluster %q not found", name)
+	}
+	return cl, nil
+}
+
+// fakeCluster wraps a client.Client to satisfy cluster.Cluster.
+type fakeCluster struct {
+	cluster.Cluster
+	client client.Client
+}
+
+func (fc *fakeCluster) GetClient() client.Client { return fc.client }
+
+var testGVK = schema.GroupVersionKind{Group: "test.crsync.r0bnet.github.io", Version: "v1", Kind: "TestResource"}
+
+func newSpokeResource(namespace, name string, spec map[string]any, labels map[string]string) *unstructured.Unstructured {
+	obj := &unstructured.Unstructured{
+		Object: map[string]any{
+			"apiVersion": "test.crsync.r0bnet.github.io/v1",
+			"kind":       "TestResource",
+			"metadata": map[string]any{
+				"name":      name,
+				"namespace": namespace,
+			},
+		},
+	}
+	if spec != nil {
+		obj.Object["spec"] = spec
+	}
+	if labels != nil {
+		obj.SetLabels(labels)
+	}
+	return obj
+}
+
+func spokeClient(objects ...client.Object) client.Client {
+	return fake.NewClientBuilder().WithScheme(testScheme).WithObjects(objects...).Build()
+}
+
+func hubClientWith(objects ...client.Object) client.Client {
+	return fake.NewClientBuilder().WithScheme(testScheme).WithObjects(objects...).Build()
+}
+
+func newNamespace(name string, labels map[string]string) *corev1.Namespace {
+	return &corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: name, Labels: labels}}
+}
+
+func newRequest(clusterName, namespace, name string) mcreconcile.Request {
+	return mcreconcile.Request{
+		ClusterName: multicluster.ClusterName(clusterName),
+		Request: reconcile.Request{
+			NamespacedName: client.ObjectKey{Namespace: namespace, Name: name},
+		},
+	}
+}
+
+func TestReconcile_create(t *testing.T) {
+	sourceCM := newSpokeResource("default", "my-cm", map[string]any{"key": "value"}, map[string]string{"app": "test"})
+	sc := spokeClient(sourceCM)
+	hc := hubClientWith(newNamespace("spoke1--default", map[string]string{
+		LabelSourceCluster:   "spoke1",
+		LabelSourceNamespace: "default",
+	}))
+
+	ctx := context.Background()
+
+	r := NewCRSyncFromSpokeReconciler(hc, &fakeClusterProvider{
+		clusters: map[string]cluster.Cluster{"spoke1": &fakeCluster{client: sc}},
+	}, testGVK)
+
+	// First reconcile: adds the finalizer and returns early.
+	if _, err := r.Reconcile(ctx, newRequest("spoke1", "default", "my-cm")); err != nil {
+		t.Fatalf("unexpected error on first reconcile: %v", err)
+	}
+
+	// Second reconcile: creates the hub copy.
+	result, err := r.Reconcile(ctx, newRequest("spoke1", "default", "my-cm"))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if result.RequeueAfter != 0 {
+		t.Fatalf("unexpected requeue: %v", result)
+	}
+
+	// Verify hub resource was created.
+	hub := &unstructured.Unstructured{}
+	hub.SetGroupVersionKind(testGVK)
+	if err := hc.Get(ctx, client.ObjectKey{Namespace: "spoke1--default", Name: "my-cm"}, hub); err != nil {
+		t.Fatalf("expected hub resource to exist: %v", err)
+	}
+
+	// Verify labels.
+	labels := hub.GetLabels()
+	if labels[LabelSourceCluster] != "spoke1" {
+		t.Errorf("expected source-cluster label = spoke1, got %q", labels[LabelSourceCluster])
+	}
+	if labels[LabelSourceNamespace] != "default" {
+		t.Errorf("expected source-namespace label = default, got %q", labels[LabelSourceNamespace])
+	}
+	if labels[LabelSourceName] != "my-cm" {
+		t.Errorf("expected source-name label = my-cm, got %q", labels[LabelSourceName])
+	}
+	if labels["app"] != "test" {
+		t.Errorf("expected app label = test, got %q", labels["app"])
+	}
+
+	// Verify spec was copied.
+	spec, ok := hub.Object["spec"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected spec field in hub resource")
+	}
+	if spec["key"] != "value" {
+		t.Errorf("expected spec.key = value, got %v", spec["key"])
+	}
+}
+
+func TestReconcile_update(t *testing.T) {
+	sourceCM := newSpokeResource("default", "my-cm", map[string]any{"key": "updated"}, nil)
+	sc := spokeClient(sourceCM)
+
+	ctx := context.Background()
+
+	// Pre-create the hub copy with old spec.
+	existingHub := newSpokeResource("spoke1--default", "my-cm", map[string]any{"key": "old"}, map[string]string{
+		LabelSourceCluster:   "spoke1",
+		LabelSourceNamespace: "default",
+		LabelSourceName:      "my-cm",
+	})
+	hc := hubClientWith(newNamespace("spoke1--default", map[string]string{
+		LabelSourceCluster:   "spoke1",
+		LabelSourceNamespace: "default",
+	}), existingHub)
+
+	r := NewCRSyncFromSpokeReconciler(hc, &fakeClusterProvider{
+		clusters: map[string]cluster.Cluster{"spoke1": &fakeCluster{client: sc}},
+	}, testGVK)
+
+	// First reconcile: adds the finalizer and returns early.
+	if _, err := r.Reconcile(ctx, newRequest("spoke1", "default", "my-cm")); err != nil {
+		t.Fatalf("unexpected error on first reconcile: %v", err)
+	}
+
+	// Second reconcile: updates the hub copy.
+	result, err := r.Reconcile(ctx, newRequest("spoke1", "default", "my-cm"))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if result.RequeueAfter != 0 {
+		t.Fatalf("unexpected requeue: %v", result)
+	}
+
+	hub := &unstructured.Unstructured{}
+	hub.SetGroupVersionKind(testGVK)
+	if err := hc.Get(ctx, client.ObjectKey{Namespace: "spoke1--default", Name: "my-cm"}, hub); err != nil {
+		t.Fatalf("expected hub resource to exist: %v", err)
+	}
+
+	// Verify spec was updated.
+	spec, ok := hub.Object["spec"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected spec field in hub resource")
+	}
+	if spec["key"] != "updated" {
+		t.Errorf("expected spec.key = updated, got %v", spec["key"])
+	}
+}
+
+func TestReconcile_namespaceCreatedOnDemand(t *testing.T) {
+	sourceCM := newSpokeResource("default", "my-cm", map[string]any{"key": "value"}, nil)
+	sc := spokeClient(sourceCM)
+	hc := hubClientWith() // no namespace pre-created
+
+	ctx := context.Background()
+
+	r := NewCRSyncFromSpokeReconciler(hc, &fakeClusterProvider{
+		clusters: map[string]cluster.Cluster{"spoke1": &fakeCluster{client: sc}},
+	}, testGVK)
+
+	// First reconcile: adds the finalizer and returns early.
+	if _, err := r.Reconcile(ctx, newRequest("spoke1", "default", "my-cm")); err != nil {
+		t.Fatalf("unexpected error on first reconcile: %v", err)
+	}
+
+	// Second reconcile: creates the namespace on-demand and the hub copy.
+	result, err := r.Reconcile(ctx, newRequest("spoke1", "default", "my-cm"))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if result.RequeueAfter != 0 {
+		t.Fatalf("unexpected requeue: %v", result)
+	}
+
+	// Verify the namespace was created with correct labels.
+	ns := &corev1.Namespace{}
+	if err := hc.Get(ctx, client.ObjectKey{Name: "spoke1--default"}, ns); err != nil {
+		t.Fatalf("expected namespace spoke1--default to exist: %v", err)
+	}
+	if ns.Labels[LabelSourceCluster] != "spoke1" {
+		t.Errorf("expected label %s = spoke1, got %q", LabelSourceCluster, ns.Labels[LabelSourceCluster])
+	}
+	if ns.Labels[LabelSourceNamespace] != "default" {
+		t.Errorf("expected label %s = default, got %q", LabelSourceNamespace, ns.Labels[LabelSourceNamespace])
+	}
+
+	// Verify hub resource was created.
+	hub := &unstructured.Unstructured{}
+	hub.SetGroupVersionKind(testGVK)
+	if err := hc.Get(ctx, client.ObjectKey{Namespace: "spoke1--default", Name: "my-cm"}, hub); err != nil {
+		t.Fatalf("expected hub resource to exist: %v", err)
+	}
+}
+
+func TestReconcile_namespaceLabelDriftCorrected(t *testing.T) {
+	sourceCM := newSpokeResource("default", "my-cm", map[string]any{"key": "value"}, nil)
+	sc := spokeClient(sourceCM)
+	// Namespace exists but labels are missing (simulating manual removal or drift).
+	hc := hubClientWith(newNamespace("spoke1--default", nil))
+
+	ctx := context.Background()
+
+	r := NewCRSyncFromSpokeReconciler(hc, &fakeClusterProvider{
+		clusters: map[string]cluster.Cluster{"spoke1": &fakeCluster{client: sc}},
+	}, testGVK)
+
+	// First reconcile: adds the finalizer and returns early.
+	if _, err := r.Reconcile(ctx, newRequest("spoke1", "default", "my-cm")); err != nil {
+		t.Fatalf("unexpected error on first reconcile: %v", err)
+	}
+
+	// Second reconcile: corrects labels and creates the hub copy.
+	if _, err := r.Reconcile(ctx, newRequest("spoke1", "default", "my-cm")); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	// Verify the namespace labels were corrected.
+	ns := &corev1.Namespace{}
+	if err := hc.Get(ctx, client.ObjectKey{Name: "spoke1--default"}, ns); err != nil {
+		t.Fatalf("expected namespace spoke1--default to exist: %v", err)
+	}
+	if ns.Labels[LabelSourceCluster] != "spoke1" {
+		t.Errorf("expected label %s = spoke1, got %q", LabelSourceCluster, ns.Labels[LabelSourceCluster])
+	}
+	if ns.Labels[LabelSourceNamespace] != "default" {
+		t.Errorf("expected label %s = default, got %q", LabelSourceNamespace, ns.Labels[LabelSourceNamespace])
+	}
+}
+
+func TestReconcile_sourceDeleted(t *testing.T) {
+	sc := spokeClient() // no source resource
+
+	ctx := context.Background()
+
+	// Hub copy exists.
+	existingHub := newSpokeResource("spoke1--default", "my-cm", nil, map[string]string{
+		LabelSourceCluster:   "spoke1",
+		LabelSourceNamespace: "default",
+		LabelSourceName:      "my-cm",
+	})
+	hc := hubClientWith(newNamespace("spoke1--default", map[string]string{
+		LabelSourceCluster:   "spoke1",
+		LabelSourceNamespace: "default",
+	}), existingHub)
+
+	r := NewCRSyncFromSpokeReconciler(hc, &fakeClusterProvider{
+		clusters: map[string]cluster.Cluster{"spoke1": &fakeCluster{client: sc}},
+	}, testGVK)
+
+	result, err := r.Reconcile(ctx, newRequest("spoke1", "default", "my-cm"))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if result.RequeueAfter != 0 {
+		t.Fatalf("unexpected requeue: %v", result)
+	}
+
+	// Verify hub copy was deleted.
+	hub := &unstructured.Unstructured{}
+	hub.SetGroupVersionKind(testGVK)
+	err = hc.Get(ctx, client.ObjectKey{Namespace: "spoke1--default", Name: "my-cm"}, hub)
+	if err == nil {
+		t.Fatal("expected hub resource to be deleted")
+	}
+	if !apierrors.IsNotFound(err) {
+		t.Fatalf("expected NotFound, got: %v", err)
+	}
+}
+
+func TestReconcile_sourceDeletedNoHubCopy(t *testing.T) {
+	sc := spokeClient() // no source
+	hc := hubClientWith(newNamespace("spoke1--default", map[string]string{
+		LabelSourceCluster:   "spoke1",
+		LabelSourceNamespace: "default",
+	})) // no hub copy either
+
+	r := NewCRSyncFromSpokeReconciler(hc, &fakeClusterProvider{
+		clusters: map[string]cluster.Cluster{"spoke1": &fakeCluster{client: sc}},
+	}, testGVK)
+
+	result, err := r.Reconcile(context.Background(), newRequest("spoke1", "default", "my-cm"))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if result.RequeueAfter != 0 {
+		t.Fatalf("unexpected requeue: %v", result)
+	}
+}

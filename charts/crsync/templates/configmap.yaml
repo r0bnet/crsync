@@ -1,0 +1,23 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: crsync-controller-manager
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "crsync.labels" . | nindent 4 }}
+data:
+  config.yaml: |
+    resources:
+    {{- range .Values.config.resources }}
+      - group: {{ .group | quote }}
+        {{- if .version }}
+        version: {{ .version | quote }}
+        {{- end }}
+        kind: {{ .kind | quote }}
+    {{- end }}
+    {{- if .Values.config.secretTypes }}
+    secretTypes:
+    {{- range .Values.config.secretTypes }}
+      - {{ . | quote }}
+    {{- end }}
+    {{- end }}

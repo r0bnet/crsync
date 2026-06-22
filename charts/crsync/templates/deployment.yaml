@@ -1,0 +1,67 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: crsync-controller-manager
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "crsync.labels" . | nindent 4 }}
+spec:
+  replicas: {{ .Values.replicas }}
+  selector:
+    matchLabels:
+      {{- include "crsync.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      annotations:
+        checksum/config: {{ include (print $.Template.BasePath "/configmap.yaml") . | sha256sum }}
+      labels:
+        {{- include "crsync.selectorLabels" . | nindent 8 }}
+    spec:
+      serviceAccountName: {{ .Values.serviceAccount.name }}
+      securityContext:
+        {{- toYaml .Values.securityContext | nindent 8 }}
+      terminationGracePeriodSeconds: 10
+      containers:
+      - name: manager
+        image: "{{ .Values.image.registry }}:{{ .Values.image.tag }}"
+        imagePullPolicy: {{ .Values.image.pullPolicy }}
+        args:
+        - --config=/etc/crsync/config.yaml
+        {{- if .Values.leaderElection.enabled }}
+        - --leader-elect
+        {{- end }}
+        - --metrics-bind-address={{ .Values.metrics.bindAddress }}
+        - --health-probe-bind-address={{ .Values.probes.bindAddress }}
+        - --kubeconfig-namespace={{ .Values.kubeconfig.namespace }}
+        {{- if .Values.kubeconfig.secretLabel }}
+        - --kubeconfig-secret-label={{ .Values.kubeconfig.secretLabel }}
+        {{- end }}
+        {{- if .Values.kubeconfig.secretKey }}
+        - --kubeconfig-secret-key={{ .Values.kubeconfig.secretKey }}
+        {{- end }}
+        - --hub-max-concurrent-reconciles={{ .Values.concurrency.hub }}
+        - --spoke-max-concurrent-reconciles={{ .Values.concurrency.spoke }}
+        securityContext:
+          {{- toYaml .Values.containerSecurityContext | nindent 10 }}
+        resources:
+          {{- toYaml .Values.resources | nindent 10 }}
+        livenessProbe:
+          httpGet:
+            path: /healthz
+            port: 8081
+          initialDelaySeconds: 15
+          periodSeconds: 20
+        readinessProbe:
+          httpGet:
+            path: /readyz
+            port: 8081
+          initialDelaySeconds: 5
+          periodSeconds: 10
+        volumeMounts:
+        - name: config
+          mountPath: /etc/crsync
+          readOnly: true
+      volumes:
+      - name: config
+        configMap:
+          name: crsync-controller-manager

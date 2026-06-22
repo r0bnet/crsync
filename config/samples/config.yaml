@@ -1,0 +1,12 @@
+# List of GVKs the controller will watch across all clusters.
+resources:
+  - group: ""
+    version: "v1"
+    kind: "ConfigMap"
+  - group: ""
+    version: "v1"
+    kind: "Secret"
+
+# Optional list of Secret types the secret controller should reconcile (e.g. "Opaque", "kubernetes.io/tls"). When empty, all Secret types are reconciled.
+secretTypes:
+  - "Opaque"

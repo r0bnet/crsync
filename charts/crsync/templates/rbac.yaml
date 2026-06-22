@@ -1,0 +1,162 @@
+{{/* Leader election Role (namespace-scoped) */}}
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: crsync-leader-election-role
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "crsync.labels" . | nindent 4 }}
+rules:
+- apiGroups:
+  - ""
+  resources:
+  - configmaps
+  verbs:
+  - get
+  - list
+  - watch
+  - create
+  - update
+  - patch
+  - delete
+- apiGroups:
+  - coordination.k8s.io
+  resources:
+  - leases
+  verbs:
+  - get
+  - list
+  - watch
+  - create
+  - update
+  - patch
+  - delete
+- apiGroups:
+  - ""
+  resources:
+  - events
+  verbs:
+  - create
+  - patch
+---
+{{/* Leader election RoleBinding */}}
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: crsync-leader-election-rolebinding
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "crsync.labels" . | nindent 4 }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: crsync-leader-election-role
+subjects:
+- kind: ServiceAccount
+  name: {{ .Values.serviceAccount.name }}
+  namespace: {{ .Release.Namespace }}
+---
+{{/* Manager ClusterRole — static rules + dynamic rules from configured GVKs */}}
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: crsync-manager-role
+  labels:
+    {{- include "crsync.labels" . | nindent 4 }}
+rules:
+{{/* --- Static rules (always needed) --- */}}
+{{/* Namespace provisioner: creates hub namespaces on demand, deletes on cluster disengage */}}
+- apiGroups:
+  - ""
+  resources:
+  - namespaces
+  verbs:
+  - get
+  - list
+  - watch
+  - create
+  - update
+  - delete
+{{/* Secret controller: syncs secrets hub↔spoke, manages finalizers */}}
+- apiGroups:
+  - ""
+  resources:
+  - secrets
+  verbs:
+  - get
+  - list
+  - watch
+  - create
+  - update
+  - patch
+  - delete
+- apiGroups:
+  - ""
+  resources:
+  - secrets/finalizers
+  verbs:
+  - update
+{{/* Event controller: watches events.k8s.io/v1 Events on the hub */}}
+- apiGroups:
+  - events.k8s.io
+  resources:
+  - events
+  verbs:
+  - get
+  - list
+  - watch
+{{/* Core events: for recording controller events */}}
+- apiGroups:
+  - ""
+  resources:
+  - events
+  verbs:
+  - create
+  - patch
+{{/* Kubeconfig provider: watches secrets in the kubeconfig namespace */}}
+{{/* (covered by the secrets rule above) */}}
+{{/* --- Dynamic rules from configured GVKs --- */}}
+{{- range .Values.config.resources }}
+- apiGroups:
+  - {{ .group | quote }}
+  resources:
+  - {{ .resource | quote }}
+  verbs:
+  - get
+  - list
+  - watch
+  - create
+  - update
+  - patch
+  - delete
+- apiGroups:
+  - {{ .group | quote }}
+  resources:
+  - {{ printf "%s/status" .resource | quote }}
+  verbs:
+  - get
+  - patch
+  - update
+- apiGroups:
+  - {{ .group | quote }}
+  resources:
+  - {{ printf "%s/finalizers" .resource | quote }}
+  verbs:
+  - update
+{{- end }}
+---
+{{/* Manager ClusterRoleBinding */}}
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: crsync-manager-rolebinding
+  labels:
+    {{- include "crsync.labels" . | nindent 4 }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: crsync-manager-role
+subjects:
+- kind: ServiceAccount
+  name: {{ .Values.serviceAccount.name }}
+  namespace: {{ .Release.Namespace }}
