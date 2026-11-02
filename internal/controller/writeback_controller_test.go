@@ -2,6 +2,7 @@ package controller
 
 import (
 	"context"
+	"fmt"
 	"testing"
 
 	corev1 "k8s.io/api/core/v1"
@@ -13,6 +14,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 	"sigs.k8s.io/controller-runtime/pkg/cluster"
+	"sigs.k8s.io/multicluster-runtime/pkg/multicluster"
 )
 
 var secretGVK = corev1.SchemeGroupVersion.WithKind("Secret")
@@ -234,4 +236,24 @@ func TestWriteBack_ignoresObjectsOutsideHubNamespaces(t *testing.T) {
 	if _, ok := s.spokeCopy(t); ok {
 		t.Error("copied an object from a namespace crsync doesn't own")
 	}
+}
+
+// At startup hub requests arrive before the workload cluster is engaged.
+func TestWriteBack_retriesWhenClusterNotEngaged(t *testing.T) {
+	s := newWriteBackTestSetup(t, true, []client.Object{eventTestComposed("my-db"), writeBackHubSecret(true, nil)})
+	s.r.clusters = notEngagedClusters{}
+
+	result, err := s.r.Reconcile(context.Background(), newRequest("", eventTestHubNS, "my-db-conn"))
+	if err != nil {
+		t.Fatalf("reconcile: %v", err)
+	}
+	if result.RequeueAfter != clusterNotEngagedRetry {
+		t.Errorf("RequeueAfter = %v, want %v: the request must not be dropped", result.RequeueAfter, clusterNotEngagedRetry)
+	}
+}
+
+type notEngagedClusters struct{}
+
+func (notEngagedClusters) GetCluster(_ context.Context, name multicluster.ClusterName) (cluster.Cluster, error) {
+	return nil, fmt.Errorf("cluster %s: %w", name, multicluster.ErrClusterNotFound)
 }

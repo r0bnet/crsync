@@ -2,6 +2,7 @@ package controller
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"time"
 
@@ -41,6 +42,8 @@ const (
 	ReasonWriteBackTypeMissing = "WriteBackTypeMissing"
 
 	writeBackTypeRetry = 5 * time.Minute
+	// clusterNotEngagedRetry covers requests that arrive before their cluster is engaged, e.g. at startup.
+	clusterNotEngagedRetry = 5 * time.Second
 )
 
 // writeBackReconciler copies hub objects of one GVK that belong to a hub copy (by owner
@@ -105,8 +108,20 @@ func writeBackCopyToHubRequest(clusterName multicluster.ClusterName, _ cluster.C
 }
 
 // Reconcile writes a hub object back to the workload cluster, or deletes the copy once
-// the hub object is gone.
+// the hub object is gone. Unknown clusters are retried: the builder would drop them silently.
 func (r *writeBackReconciler) Reconcile(ctx context.Context, req mcreconcile.Request) (ctrl.Result, error) {
+	result, err := r.reconcile(ctx, req)
+	if errors.Is(err, multicluster.ErrClusterNotFound) {
+		log.FromContext(ctx).V(1).Info("workload cluster not engaged yet, retrying", "hubObject", req.NamespacedName)
+		return ctrl.Result{RequeueAfter: clusterNotEngagedRetry}, nil
+	}
+	if err != nil {
+		return ctrl.Result{}, err
+	}
+	return result, nil
+}
+
+func (r *writeBackReconciler) reconcile(ctx context.Context, req mcreconcile.Request) (ctrl.Result, error) {
 	logger := log.FromContext(ctx).WithValues("gvk", r.gvk.String(), "hubObject", req.NamespacedName)
 	ctx = log.IntoContext(ctx, logger)
 
