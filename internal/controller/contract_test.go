@@ -9,6 +9,7 @@ import (
 // examplesUsingSourceClusterLabel reference LabelSourceCluster as a string literal.
 var examplesUsingSourceClusterLabel = []string{
 	"../../examples/crossplane/composition.yaml",
+	"../../examples/crossplane/hub-policy.yaml",
 	"../../examples/mutating-admission-policy/policy.yaml",
 }
 

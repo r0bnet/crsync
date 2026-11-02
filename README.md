@@ -21,7 +21,7 @@ default/orders  ── spec, labels ──▶  fleet-spoke1--default/orders ─�
 - **Status (hub → spoke)** is copied back. A finalizer keeps the spoke object until the hub copy is gone.
 - **Opt-in:** [write-back](#write-back) and [event replay](#event-replay).
 
-Cluster-specific changes to hub copies belong on the hub, e.g. a [MutatingAdmissionPolicy](examples/mutating-admission-policy).
+Everything in `spec`, labels and annotations reaches the hub controller. Cluster-specific changes and fields users must not set belong on the hub, e.g. a [MutatingAdmissionPolicy](examples/mutating-admission-policy) (see also [examples/crossplane](examples/crossplane#hub-owned-fields)).
 
 ## Quick start on kind
 

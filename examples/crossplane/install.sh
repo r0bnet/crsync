@@ -74,6 +74,9 @@ hub apply -f "${EXAMPLE_DIR}/xrd.yaml" -f "${EXAMPLE_DIR}/composition.yaml"
 hub wait --for=condition=Established xrd/xdatabases.demo.crsync.io --timeout=120s
 hub wait --for=condition=Established "crd/${XR_CRD}" --timeout=120s
 
+echo "=== Protecting Crossplane's fields on hub copies"
+sed "s/system:serviceaccount:crsync-system:/system:serviceaccount:${RELEASE_NAMESPACE}:/" "${EXAMPLE_DIR}/hub-policy.yaml" | hub apply -f -
+
 # Stands in for the central controller: one ClusterProviderConfig per inventory cluster,
 # named like crsync's source-cluster label (<profile-namespace>.<profile-name>).
 echo "=== Creating one ClusterProviderConfig per ClusterProfile in ${PROFILE_NAMESPACE}"
@@ -89,9 +92,13 @@ spec:
 EOF
 done
 
-echo "=== Copying only the XR CRD to the workload clusters"
+# Stands in for the cluster manager (e.g. Sveltos): users get the XR API without Crossplane's
+# fields, so the workload cluster's API server prunes spec.crossplane before crsync sees it.
+echo "=== Copying the stripped XR CRD to the workload clusters"
 XR_CRD_YAML=$(hub get crd "${XR_CRD}" -o yaml | yq 'del(.metadata.ownerReferences, .metadata.resourceVersion, .metadata.uid,
-	.metadata.creationTimestamp, .metadata.generation, .metadata.managedFields, .metadata.annotations, .status)')
+	.metadata.creationTimestamp, .metadata.generation, .metadata.managedFields, .metadata.annotations, .status)
+	| del(.spec.versions[].schema.openAPIV3Schema.properties.spec.properties.crossplane)
+	| del(.spec.versions[].schema.openAPIV3Schema.properties.status.properties.crossplane)')
 for ctx in $(kubectl config get-contexts -o name | grep -E "^kind-${SPOKE_PREFIX}[0-9]+$"); do
 	echo "${XR_CRD_YAML}" | kubectl --context "${ctx}" apply -f -
 	kubectl --context "${ctx}" wait --for=condition=Established "crd/${XR_CRD}" --timeout=60s

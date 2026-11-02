@@ -1,0 +1,44 @@
+# Users must not steer Crossplane through crsync: writes by crsync can't change spec.crossplane
+# (composition selection, resourceRefs) or crossplane.io/* annotations on hub copies.
+apiVersion: admissionregistration.k8s.io/v1
+kind: MutatingAdmissionPolicy
+metadata:
+  name: crsync-protect-crossplane-fields
+spec:
+  matchConstraints:
+    resourceRules:
+      - apiGroups: ["demo.crsync.io"]
+        apiVersions: ["*"]
+        operations: ["CREATE", "UPDATE"]
+        resources: ["xdatabases"]
+    namespaceSelector:
+      matchExpressions:
+        - key: crsync.r0bnet.github.io/source-cluster
+          operator: Exists
+  matchConditions:
+    # Crossplane writes these fields itself, so only crsync's writes are reverted. install.sh sets the namespace.
+    - name: written-by-crsync
+      expression: request.userInfo.username == "system:serviceaccount:crsync-system:crsync-controller-manager"
+  failurePolicy: Fail
+  reinvocationPolicy: Never
+  mutations:
+    - patchType: JSONPatch
+      jsonPatch:
+        expression: >
+          (oldObject != null && has(oldObject.spec.crossplane)
+            ? [JSONPatch{op: "add", path: "/spec/crossplane", value: oldObject.spec.crossplane}]
+            : (has(object.spec.crossplane) ? [JSONPatch{op: "remove", path: "/spec/crossplane"}] : []))
+          +
+          (has(object.metadata.annotations)
+            ? object.metadata.annotations.filter(k, k.startsWith("crossplane.io/")).map(k,
+                oldObject != null && has(oldObject.metadata.annotations) && k in oldObject.metadata.annotations
+                  ? JSONPatch{op: "replace", path: "/metadata/annotations/" + jsonpatch.escapeKey(k), value: oldObject.metadata.annotations[k]}
+                  : JSONPatch{op: "remove", path: "/metadata/annotations/" + jsonpatch.escapeKey(k)})
+            : [])
+---
+apiVersion: admissionregistration.k8s.io/v1
+kind: MutatingAdmissionPolicyBinding
+metadata:
+  name: crsync-protect-crossplane-fields
+spec:
+  policyName: crsync-protect-crossplane-fields

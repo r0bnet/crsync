@@ -16,7 +16,12 @@ The label key is a contract between crsync and your compositions. `internal/cont
 
 ## Hub-owned fields
 
-crsync writes hub copies with server-side apply (field manager `crsync`) and only sends what it got from the workload cluster. Crossplane's `spec.crossplane.compositionRef` and similar fields stay owned by Crossplane and survive every resync.
+crsync applies only what it got from the workload cluster (field manager `crsync`), so fields Crossplane sets, like `spec.crossplane.compositionRef`, survive every resync.
+
+Users must not set them, or they could pick another Composition and its credentials:
+
+- `install.sh` ships the XR CRD to workload clusters without `spec.crossplane` and `status.crossplane`, so their API server drops those fields. In a real setup the cluster manager (e.g. Sveltos) does this.
+- Workload cluster admins can install the full CRD, so `hub-policy.yaml` also reverts any change crsync makes to `spec.crossplane` or `crossplane.io/*` annotations on hub copies.
 
 ## Events on the workload cluster
 
