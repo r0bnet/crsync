@@ -10,3 +10,5 @@ kubectl --context kind-crsynchub apply -f examples/mutating-admission-policy/pol
 
 This needs Kubernetes 1.36+ (`admissionregistration.k8s.io/v1`, enabled by default).
 Fields set this way are recorded under crsync's field manager. The policy runs on every write, so they stay in place.
+
+A policy can also read the hub namespace ([mutating-admission-policy-prefix](../mutating-admission-policy-prefix)). For anything else, such as the workload cluster, use a webhook ([mutating-webhook](../mutating-webhook)).

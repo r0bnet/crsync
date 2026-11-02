@@ -20,7 +20,7 @@ crsync applies only what it got from the workload cluster (field manager `crsync
 
 Users must not set them, or they could pick another Composition and its credentials:
 
-- `install.sh` ships the XR CRD to workload clusters without `spec.crossplane` and `status.crossplane`, so their API server drops those fields. In a real setup the cluster manager (e.g. Sveltos) does this.
+- `install.sh` ships the XR CRD to workload clusters without `spec.crossplane`, `status.crossplane` and the composition columns, so their API server drops those fields and `kubectl get` doesn't show Crossplane details. In a real setup the cluster manager (e.g. Sveltos) does this.
 - Workload cluster admins can install the full CRD, so `hub-policy.yaml` also reverts any change crsync makes to `spec.crossplane` or `crossplane.io/*` annotations on hub copies.
 
 ## Events on the workload cluster

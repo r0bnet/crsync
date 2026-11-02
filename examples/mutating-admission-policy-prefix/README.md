@@ -11,5 +11,4 @@ kubectl --context kind-crsyncspoke1 apply -f examples/mutating-admission-policy-
 
 crsync must sync `buckets.storage.example.io` (add it to `config.resources`). The source namespace on the workload cluster isn't visible to the policy, only the hub namespace and its labels.
 
-This is limited, but easy to set up. Anything more needs a policy engine like Kyverno or a custom mutating webhook. These can read other resources on the hub, and a webhook can even read the source cluster: it looks up the ClusterProfile and connects through its access provider.
-See [examples/mutating-webhook](../mutating-webhook) for a webhook that reads the source cluster.
+This is limited, but easy to set up. Anything more needs a policy engine like Kyverno or a custom mutating webhook. These can read other resources on the hub, and a webhook can even read the source cluster: it looks up the ClusterProfile and connects through its access provider, as in [mutating-webhook](../mutating-webhook).

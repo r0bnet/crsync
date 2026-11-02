@@ -18,10 +18,10 @@ default/orders  ── spec, labels ──▶  fleet-spoke1--default/orders ─�
 - **Hub namespaces:** `<cluster>--<namespace>`, e.g. `fleet-spoke1--default` for cluster `fleet/spoke1`.
 - **Labels (contract):** hub copies carry `crsync.r0bnet.github.io/source-cluster` (e.g. `fleet.spoke1`), `source-namespace` and `source-name`. Users can't override them; compositions may select on them.
 - **Spec (spoke → hub):** server-side apply with field manager `crsync`, sending every top-level field except `metadata` and `status` (e.g. `spec`, or `data` for a ConfigMap), plus labels and annotations. Hub-only fields survive; on a conflict the spoke wins and crsync records a `FieldConflict` Event on the hub copy.
-- **Status (hub → spoke)** is copied back. A finalizer keeps the spoke object until the hub copy is gone.
+- **Status (hub → spoke)** is copied back; types without a status subresource are skipped. A finalizer keeps the spoke object until the hub copy is gone, and a deleted hub copy is recreated.
 - **Opt-in:** [write-back](#write-back) and [event replay](#event-replay).
 
-Every field except `status` and most of `metadata` reaches the hub controller, labels and annotations included. Cluster-specific changes and fields users must not set belong on the hub, e.g. a [MutatingAdmissionPolicy](examples/mutating-admission-policy) (see also [examples/crossplane](examples/crossplane#hub-owned-fields)).
+Every field except `status` and most of `metadata` reaches the hub controller, labels and annotations included. Cluster-specific changes and fields users must not set belong on the hub, see [Examples](#examples).
 
 ## Quick start on kind
 
@@ -33,7 +33,16 @@ kubectl --context kind-crsyncspoke1 apply -f config/samples/crsynctest-cr.yaml
 kubectl --context kind-crsynchub get crsynctests -n fleet-crsyncspoke1--default
 ```
 
-Then try the Crossplane example: [examples/crossplane](examples/crossplane). Clean up with `test/hack/cleanup-kind-clusters.sh`.
+Then try the [examples](#examples). Clean up with `test/hack/cleanup-kind-clusters.sh`.
+
+## Examples
+
+| Example | Shows |
+|---------|-------|
+| [crossplane](examples/crossplane) | One composition for all clusters, a ClusterProviderConfig per cluster, hub-owned fields, event replay and connection Secrets via write-back |
+| [mutating-admission-policy](examples/mutating-admission-policy) | Changing hub copies on admission, using the object's own labels |
+| [mutating-admission-policy-prefix](examples/mutating-admission-policy-prefix) | Prefixing a spec field with the source cluster, read from the hub namespace |
+| [mutating-webhook](examples/mutating-webhook) | A Go webhook that reads the source namespace on the workload cluster through the ClusterProfile |
 
 ## Configuration
 
