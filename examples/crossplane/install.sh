@@ -93,12 +93,13 @@ EOF
 done
 
 # Stands in for the cluster manager (e.g. Sveltos): users get the XR API without Crossplane's
-# fields, so the workload cluster's API server prunes spec.crossplane before crsync sees it.
+# fields and composition columns, so the API server prunes spec.crossplane before crsync sees it.
 echo "=== Copying the stripped XR CRD to the workload clusters"
 XR_CRD_YAML=$(hub get crd "${XR_CRD}" -o yaml | yq 'del(.metadata.ownerReferences, .metadata.resourceVersion, .metadata.uid,
 	.metadata.creationTimestamp, .metadata.generation, .metadata.managedFields, .metadata.annotations, .status)
 	| del(.spec.versions[].schema.openAPIV3Schema.properties.spec.properties.crossplane)
-	| del(.spec.versions[].schema.openAPIV3Schema.properties.status.properties.crossplane)')
+	| del(.spec.versions[].schema.openAPIV3Schema.properties.status.properties.crossplane)
+	| del(.spec.versions[].additionalPrinterColumns[] | select(.jsonPath | test("^\\.spec\\.crossplane\\.")))')
 for ctx in $(kubectl config get-contexts -o name | grep -E "^kind-${SPOKE_PREFIX}[0-9]+$"); do
 	echo "${XR_CRD_YAML}" | kubectl --context "${ctx}" apply -f -
 	kubectl --context "${ctx}" wait --for=condition=Established "crd/${XR_CRD}" --timeout=60s
