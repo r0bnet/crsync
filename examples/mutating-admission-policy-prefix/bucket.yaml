@@ -1,0 +1,6 @@
+apiVersion: storage.example.io/v1alpha1
+kind: Bucket
+metadata:
+  name: logs
+spec:
+  name: logs

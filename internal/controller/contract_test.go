@@ -11,6 +11,7 @@ var examplesUsingSourceClusterLabel = []string{
 	"../../examples/crossplane/composition.yaml",
 	"../../examples/crossplane/hub-policy.yaml",
 	"../../examples/mutating-admission-policy/policy.yaml",
+	"../../examples/mutating-admission-policy-prefix/policy.yaml",
 }
 
 // GUARD: fails when LabelSourceCluster changes but the examples still use the old key.

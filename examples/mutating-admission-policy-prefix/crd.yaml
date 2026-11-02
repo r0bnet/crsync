@@ -1,0 +1,27 @@
+# An imaginary resource: users name a bucket, the hub derives the real, fleet-wide unique name.
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  name: buckets.storage.example.io
+spec:
+  group: storage.example.io
+  names:
+    kind: Bucket
+    plural: buckets
+  scope: Namespaced
+  versions:
+    - name: v1alpha1
+      served: true
+      storage: true
+      schema:
+        openAPIV3Schema:
+          type: object
+          properties:
+            spec:
+              type: object
+              required: ["name"]
+              properties:
+                name:
+                  type: string
+                bucketName:
+                  type: string

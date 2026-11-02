@@ -1,0 +1,36 @@
+# Sets spec.bucketName on hub copies to "<source cluster>-<spec.name>".
+# The cluster comes from the hub namespace (namespaceObject), not from the object itself.
+apiVersion: admissionregistration.k8s.io/v1
+kind: MutatingAdmissionPolicy
+metadata:
+  name: crsync-bucket-name-prefix
+spec:
+  matchConstraints:
+    resourceRules:
+      - apiGroups: ["storage.example.io"]
+        apiVersions: ["*"]
+        operations: ["CREATE", "UPDATE"]
+        resources: ["buckets"]
+    namespaceSelector:
+      matchExpressions:
+        - key: crsync.r0bnet.github.io/source-cluster
+          operator: Exists
+  failurePolicy: Fail
+  reinvocationPolicy: Never
+  mutations:
+    - patchType: ApplyConfiguration
+      applyConfiguration:
+        expression: >
+          Object{
+            spec: Object.spec{
+              bucketName: namespaceObject.metadata.labels["crsync.r0bnet.github.io/source-cluster"].replace(".", "-")
+                + "-" + object.spec.name
+            }
+          }
+---
+apiVersion: admissionregistration.k8s.io/v1
+kind: MutatingAdmissionPolicyBinding
+metadata:
+  name: crsync-bucket-name-prefix
+spec:
+  policyName: crsync-bucket-name-prefix
