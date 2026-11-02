@@ -172,6 +172,12 @@ func (r *writeBackReconciler) Reconcile(ctx context.Context, req mcreconcile.Req
 // resolveTarget returns where hubObj is copied to, or nil if it isn't selected. An owner
 // chain to a hub copy wins over AnnotationWriteBack, because it also identifies the source.
 func (r *writeBackReconciler) resolveTarget(ctx context.Context, hubObj *unstructured.Unstructured) (*writeBackTarget, error) {
+	// Checked first: the hub watch sees the GVK in every namespace, and the walk costs API calls.
+	clusterLabel, sourceNamespace, err := r.hubNamespaceSource(ctx, hubObj.GetNamespace())
+	if err != nil || clusterLabel == "" || sourceNamespace == "" {
+		return nil, err
+	}
+
 	hubCopy, hops := findHubCopy(ctx, r.ownerReader, hubObj.GetNamespace(), r.gvk, hubObj.GetName())
 	// hops == 0 means hubObj is a hub copy itself, which is synced, not written back.
 	if hubCopy != nil && hops > 0 {
@@ -179,11 +185,6 @@ func (r *writeBackReconciler) resolveTarget(ctx context.Context, hubObj *unstruc
 	}
 	if hubObj.GetAnnotations()[AnnotationWriteBack] != "true" {
 		return nil, nil
-	}
-
-	clusterLabel, sourceNamespace, err := r.hubNamespaceSource(ctx, hubObj.GetNamespace())
-	if err != nil || clusterLabel == "" {
-		return nil, err
 	}
 	return &writeBackTarget{cluster: clusterLabel, namespace: sourceNamespace}, nil
 }

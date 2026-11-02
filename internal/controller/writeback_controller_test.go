@@ -221,3 +221,17 @@ func TestIsWriteBackCopy(t *testing.T) {
 		t.Error("isWriteBackCopy accepted an unlabelled object")
 	}
 }
+
+func TestWriteBack_ignoresObjectsOutsideHubNamespaces(t *testing.T) {
+	outside := writeBackHubSecret(false, map[string]string{AnnotationWriteBack: "true"})
+	outside.Namespace = "crossplane-system"
+	s := newWriteBackTestSetup(t, true, []client.Object{newNamespace("crossplane-system", nil), outside})
+
+	_, err := s.r.Reconcile(context.Background(), newRequest("", "crossplane-system", "my-db-conn"))
+	if err != nil {
+		t.Fatalf("reconcile: %v", err)
+	}
+	if _, ok := s.spokeCopy(t); ok {
+		t.Error("copied an object from a namespace crsync doesn't own")
+	}
+}
