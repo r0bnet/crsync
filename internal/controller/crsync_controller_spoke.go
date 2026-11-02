@@ -104,7 +104,7 @@ func hubCopyToSpokeRequests(obj client.Object) []mcreconcile.Request {
 		return nil
 	}
 	return []mcreconcile.Request{{
-		ClusterName: clusterNameFromLabel(labels[LabelSourceCluster]),
+		ClusterName: ClusterNameFromLabel(labels[LabelSourceCluster]),
 		Request: reconcile.Request{
 			NamespacedName: types.NamespacedName{Namespace: labels[LabelSourceNamespace], Name: labels[LabelSourceName]},
 		},

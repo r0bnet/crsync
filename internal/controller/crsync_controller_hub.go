@@ -85,7 +85,7 @@ func (r *crsyncFromHubReconciler) reconcile(ctx context.Context, req mcreconcile
 	logger = logger.WithValues("cluster", clusterName)
 	ctx = log.IntoContext(ctx, logger)
 
-	spokeCluster, err := r.clusters.GetCluster(ctx, clusterNameFromLabel(clusterName))
+	spokeCluster, err := r.clusters.GetCluster(ctx, ClusterNameFromLabel(clusterName))
 	if err != nil {
 		return ctrl.Result{}, fmt.Errorf("get spoke cluster %s: %w", clusterName, err)
 	}

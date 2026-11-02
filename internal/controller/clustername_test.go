@@ -23,9 +23,9 @@ func TestClusterLabelValue_roundTrip(t *testing.T) {
 			if got != tt.label {
 				t.Fatalf("clusterLabelValue(%q) = %q, want %q", tt.cluster, got, tt.label)
 			}
-			back := clusterNameFromLabel(got)
+			back := ClusterNameFromLabel(got)
 			if back != multicluster.ClusterName(tt.cluster) {
-				t.Fatalf("clusterNameFromLabel(%q) = %q, want %q", got, back, tt.cluster)
+				t.Fatalf("ClusterNameFromLabel(%q) = %q, want %q", got, back, tt.cluster)
 			}
 		})
 	}

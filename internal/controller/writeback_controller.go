@@ -144,7 +144,7 @@ func (r *writeBackReconciler) reconcile(ctx context.Context, req mcreconcile.Req
 		return ctrl.Result{}, nil
 	}
 
-	spokeCluster, err := r.clusters.GetCluster(ctx, clusterNameFromLabel(target.cluster))
+	spokeCluster, err := r.clusters.GetCluster(ctx, ClusterNameFromLabel(target.cluster))
 	if err != nil {
 		return ctrl.Result{}, fmt.Errorf("get spoke cluster %s: %w", target.cluster, err)
 	}
@@ -205,7 +205,7 @@ func (r *writeBackReconciler) resolveTarget(ctx context.Context, hubObj *unstruc
 // ownedTarget targets the source of hubCopy; it returns nil while the source doesn't exist.
 func (r *writeBackReconciler) ownedTarget(ctx context.Context, hubCopy *unstructured.Unstructured) (*writeBackTarget, error) {
 	labels := hubCopy.GetLabels()
-	spokeCluster, err := r.clusters.GetCluster(ctx, clusterNameFromLabel(labels[LabelSourceCluster]))
+	spokeCluster, err := r.clusters.GetCluster(ctx, ClusterNameFromLabel(labels[LabelSourceCluster]))
 	if err != nil {
 		return nil, fmt.Errorf("get spoke cluster %s: %w", labels[LabelSourceCluster], err)
 	}
@@ -247,7 +247,7 @@ func (r *writeBackReconciler) deleteCopy(ctx context.Context, hubNamespaceName, 
 		return err
 	}
 
-	spokeCluster, err := r.clusters.GetCluster(ctx, clusterNameFromLabel(clusterLabel))
+	spokeCluster, err := r.clusters.GetCluster(ctx, ClusterNameFromLabel(clusterLabel))
 	if err != nil {
 		return fmt.Errorf("get spoke cluster %s: %w", clusterLabel, err)
 	}

@@ -89,7 +89,7 @@ func (r *eventReconciler) reconcile(ctx context.Context, req mcreconcile.Request
 	}
 
 	labels := hubCopy.GetLabels()
-	spokeCluster, err := r.clusters.GetCluster(ctx, clusterNameFromLabel(labels[LabelSourceCluster]))
+	spokeCluster, err := r.clusters.GetCluster(ctx, ClusterNameFromLabel(labels[LabelSourceCluster]))
 	if err != nil {
 		return ctrl.Result{}, fmt.Errorf("get spoke cluster %s: %w", labels[LabelSourceCluster], err)
 	}

@@ -16,10 +16,10 @@ func clusterLabelValue(clusterName string) string {
 	return strings.Replace(clusterName, "/", ".", 1)
 }
 
-// clusterNameFromLabel reverses clusterLabelValue. The first "." is the
+// ClusterNameFromLabel reverses clusterLabelValue (exported for examples). The first "." is the
 // separator because a ClusterProfile namespace can't contain one.
 // shortcut: a dotted name without "/" (e.g. a kind cluster "a.b") decodes wrongly; fine for dev-only kind.
-func clusterNameFromLabel(value string) multicluster.ClusterName {
+func ClusterNameFromLabel(value string) multicluster.ClusterName {
 	return multicluster.ClusterName(strings.Replace(value, ".", "/", 1))
 }
 

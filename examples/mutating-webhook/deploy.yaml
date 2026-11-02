@@ -1,0 +1,168 @@
+# The webhook on the hub. install.sh creates the TLS Secret and replaces CA_BUNDLE.
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: crsync-webhook
+  namespace: crsync-webhook
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: crsync-webhook
+rules:
+  - apiGroups: [""]
+    resources: ["namespaces"]
+    verbs: ["get"]
+  - apiGroups: ["multicluster.x-k8s.io"]
+    resources: ["clusterprofiles"]
+    verbs: ["get"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: crsync-webhook
+subjects:
+  - kind: ServiceAccount
+    name: crsync-webhook
+    namespace: crsync-webhook
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: crsync-webhook
+---
+# The access provider plugin reads the spoke kubeconfigs from this namespace.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: crsync-webhook-kubeconfigs
+  namespace: kubeconfigs
+rules:
+  - apiGroups: [""]
+    resources: ["secrets"]
+    verbs: ["get"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: crsync-webhook-kubeconfigs
+  namespace: kubeconfigs
+subjects:
+  - kind: ServiceAccount
+    name: crsync-webhook
+    namespace: crsync-webhook
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: crsync-webhook-kubeconfigs
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: crsync-webhook
+  namespace: crsync-webhook
+data:
+  clusterprofile-provider.json: |
+    {
+      "providers": [
+        {
+          "name": "kubeconfig-secretreader",
+          "execConfig": {
+            "apiVersion": "client.authentication.k8s.io/v1",
+            "command": "/plugin/bin/kubeconfig-secretreader-plugin",
+            "provideClusterInfo": true
+          }
+        }
+      ]
+    }
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: crsync-webhook
+  namespace: crsync-webhook
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: crsync-webhook
+  template:
+    metadata:
+      labels:
+        app: crsync-webhook
+    spec:
+      serviceAccountName: crsync-webhook
+      securityContext:
+        runAsNonRoot: true
+      containers:
+        - name: webhook
+          image: r0bnet/crsync-webhook:e2e
+          imagePullPolicy: Never
+          args:
+            - --clusterprofile-provider-file=/etc/webhook/clusterprofile-provider.json
+            - --cert-dir=/etc/webhook/certs
+          ports:
+            - containerPort: 9443
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
+          volumeMounts:
+            - name: config
+              mountPath: /etc/webhook
+              readOnly: true
+            - name: certs
+              mountPath: /etc/webhook/certs
+              readOnly: true
+            - name: access-plugin
+              mountPath: /plugin
+              readOnly: true
+      volumes:
+        - name: config
+          configMap:
+            name: crsync-webhook
+        - name: certs
+          secret:
+            secretName: crsync-webhook-tls
+        - name: access-plugin
+          image:
+            reference: registry.k8s.io/cluster-inventory-api/kubeconfig-secretreader:v0.1.3
+            pullPolicy: IfNotPresent
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: crsync-webhook
+  namespace: crsync-webhook
+spec:
+  selector:
+    app: crsync-webhook
+  ports:
+    - port: 443
+      targetPort: 9443
+---
+apiVersion: admissionregistration.k8s.io/v1
+kind: MutatingWebhookConfiguration
+metadata:
+  name: crsync-webhook
+webhooks:
+  - name: queues.crsync-webhook.example.io
+    clientConfig:
+      service:
+        name: crsync-webhook
+        namespace: crsync-webhook
+        path: /mutate
+      caBundle: CA_BUNDLE
+    rules:
+      - apiGroups: ["messaging.example.io"]
+        apiVersions: ["*"]
+        operations: ["CREATE", "UPDATE"]
+        resources: ["queues"]
+    # Only hub namespaces created by crsync.
+    namespaceSelector:
+      matchExpressions:
+        - key: crsync.r0bnet.github.io/source-cluster
+          operator: Exists
+    failurePolicy: Fail
+    sideEffects: None
+    admissionReviewVersions: ["v1"]
+    timeoutSeconds: 10

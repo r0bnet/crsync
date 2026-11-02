@@ -1,0 +1,6 @@
+apiVersion: messaging.example.io/v1alpha1
+kind: Queue
+metadata:
+  name: orders
+spec:
+  size: 10
