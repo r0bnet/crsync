@@ -1,0 +1,10 @@
+# Passes the XRD schema, but "Payments Team" is not a valid label value, so the
+# provider fails at runtime. Fix it on the workload cluster with team: payments-team.
+apiVersion: demo.crsync.io/v1alpha1
+kind: XDatabase
+metadata:
+  name: payments
+  namespace: default
+spec:
+  size: small
+  team: "Payments Team"

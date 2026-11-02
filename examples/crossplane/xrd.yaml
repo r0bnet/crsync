@@ -24,6 +24,9 @@ spec:
                   enum: [small, medium, large]
                 message:
                   type: string
+                # Free text on purpose: it becomes a label, so invalid values only fail at runtime.
+                team:
+                  type: string
               required: [size]
             status:
               type: object

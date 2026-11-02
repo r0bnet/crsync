@@ -30,6 +30,21 @@ helm upgrade crsync charts/crsync --reuse-values \
   --set-json 'eventReplay.ownerResources=[{"group":"kubernetes.m.crossplane.io","resources":["objects"]}]'
 ```
 
+### Example: a mistake the user can fix
+
+`team` is free text in the XRD, so `xdatabase-invalid-team.yaml` (`team: "Payments Team"`) is accepted on the workload cluster. On the hub the composition turns it into a label, and Kubernetes rejects the space:
+
+```bash
+kubectl --context kind-crsyncspoke1 apply -f examples/crossplane/xdatabase-invalid-team.yaml
+kubectl --context kind-crsyncspoke1 describe xdatabase payments
+#   Synced=False  ReconcileError  Unsynced resources: database
+#   Warning  ComposeResources  cannot apply composed resource "database": ... Invalid value: "Payments Team": a valid label must ...
+kubectl --context kind-crsyncspoke1 patch xdatabase payments --type=merge -p '{"spec":{"team":"payments-team"}}'
+#   Ready=True, plus "Object: Successfully requested creation ..." from the provider
+```
+
+The Warning comes from Crossplane composing on the XR itself, because provider-kubernetes's `Object` CRD already validates the embedded labels. The provider's own Events reach the user through the ownerReference walk. Messages like this one contain hub names (here the composed `Object`'s name), which crsync can't scrub.
+
 ## Run it
 
 ```bash

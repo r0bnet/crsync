@@ -42,6 +42,9 @@ spec:
               - type: FromCompositeFieldPath
                 fromFieldPath: spec.message
                 toFieldPath: spec.forProvider.manifest.data.message
+              - type: FromCompositeFieldPath
+                fromFieldPath: spec.team
+                toFieldPath: spec.forProvider.manifest.metadata.labels.team
               - type: ToCompositeFieldPath
                 fromFieldPath: spec.providerConfigRef.name
                 toFieldPath: status.providerConfig
