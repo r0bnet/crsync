@@ -27,7 +27,7 @@ while [[ $# -gt 0 ]]; do
 	esac
 done
 
-EXISTING_CLUSTERS=$(kind -- get clusters 2> /dev/null || true)
+EXISTING_CLUSTERS=$(kind get clusters 2> /dev/null || true)
 
 # ---------------------------------------------------------------------------
 # Build the list of spokes to delete.
@@ -55,7 +55,7 @@ for ((idx = ${#SPOKES_TO_DELETE[@]} - 1; idx >= 0; idx--)); do
 	spoke="${SPOKES_TO_DELETE[${idx}]}"
 	if echo "${EXISTING_CLUSTERS}" | grep -qx "${spoke}"; then
 		echo "Deleting spoke cluster: ${spoke}"
-		kind -- delete cluster --name "${spoke}"
+		kind delete cluster --name "${spoke}"
 	else
 		echo "Spoke cluster ${spoke} does not exist, skipping."
 	fi
@@ -63,7 +63,7 @@ done
 
 if echo "${EXISTING_CLUSTERS}" | grep -qx "${HUB_CLUSTER}"; then
 	echo "Deleting hub cluster: ${HUB_CLUSTER}"
-	kind -- delete cluster --name "${HUB_CLUSTER}"
+	kind delete cluster --name "${HUB_CLUSTER}"
 else
 	echo "Hub cluster ${HUB_CLUSTER} does not exist, skipping."
 fi

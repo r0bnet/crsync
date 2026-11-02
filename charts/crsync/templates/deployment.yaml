@@ -32,13 +32,7 @@ spec:
         {{- end }}
         - --metrics-bind-address={{ .Values.metrics.bindAddress }}
         - --health-probe-bind-address={{ .Values.probes.bindAddress }}
-        - --kubeconfig-namespace={{ .Values.kubeconfig.namespace }}
-        {{- if .Values.kubeconfig.secretLabel }}
-        - --kubeconfig-secret-label={{ .Values.kubeconfig.secretLabel }}
-        {{- end }}
-        {{- if .Values.kubeconfig.secretKey }}
-        - --kubeconfig-secret-key={{ .Values.kubeconfig.secretKey }}
-        {{- end }}
+        - --clusterprofile-provider-file=/etc/crsync/clusterprofile-provider.json
         - --hub-max-concurrent-reconciles={{ .Values.concurrency.hub }}
         - --spoke-max-concurrent-reconciles={{ .Values.concurrency.spoke }}
         securityContext:
@@ -61,7 +55,14 @@ spec:
         - name: config
           mountPath: /etc/crsync
           readOnly: true
+        - name: access-plugin
+          mountPath: /plugin
+          readOnly: true
       volumes:
       - name: config
         configMap:
           name: crsync-controller-manager
+      - name: access-plugin
+        image:
+          reference: {{ .Values.clusterProfile.accessProvider.image }}
+          pullPolicy: {{ .Values.clusterProfile.accessProvider.pullPolicy }}

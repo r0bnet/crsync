@@ -61,7 +61,7 @@ done
 # ---------------------------------------------------------------------------
 # Pre-flight: check that none of the clusters already exist.
 # ---------------------------------------------------------------------------
-EXISTING_CLUSTERS=$(kind -- get clusters 2> /dev/null || true)
+EXISTING_CLUSTERS=$(kind get clusters 2> /dev/null || true)
 CONFLICTS=()
 for name in "${CLUSTERS[@]}"; do
     if echo "${EXISTING_CLUSTERS}" | grep -qx "${name}"; then
@@ -89,12 +89,12 @@ fi
 # ---------------------------------------------------------------------------
 if [[ "${SKIP_CREATE}" == "false" ]]; then
     echo "Creating hub cluster: ${HUB_CLUSTER}"
-    kind -- create cluster --name "${HUB_CLUSTER}" --wait 60s
+    kind create cluster --name "${HUB_CLUSTER}" --wait 60s
 
     for i in $(seq 1 "${NUM_SPOKES}"); do
         spoke="${SPOKE_PREFIX}${i}"
         echo "Creating spoke cluster: ${spoke}"
-        kind -- create cluster --name "${spoke}" --wait 60s
+        kind create cluster --name "${spoke}" --wait 60s
     done
 fi
 
@@ -113,7 +113,7 @@ fi
 # Export the hub kubeconfig to a dedicated temp file.
 # ---------------------------------------------------------------------------
 KUBECONFIG_PATH="/tmp/kubeconfig-${HUB_CLUSTER}"
-kind -- get kubeconfig --name "${HUB_CLUSTER}" > "${KUBECONFIG_PATH}"
+kind get kubeconfig --name "${HUB_CLUSTER}" > "${KUBECONFIG_PATH}"
 chmod 600 "${KUBECONFIG_PATH}"
 echo "Hub kubeconfig written to: ${KUBECONFIG_PATH}"
 

@@ -14,14 +14,17 @@ import (
 	_ "k8s.io/client-go/plugin/pkg/client/auth"
 	"k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/clientcmd"
+	clusterinventoryv1alpha1 "sigs.k8s.io/cluster-inventory-api/apis/v1alpha1"
+	"sigs.k8s.io/cluster-inventory-api/pkg/access"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/healthz"
 	"sigs.k8s.io/controller-runtime/pkg/log/zap"
 	metricsserver "sigs.k8s.io/controller-runtime/pkg/metrics/server"
 	mcmanager "sigs.k8s.io/multicluster-runtime/pkg/manager"
 	"sigs.k8s.io/multicluster-runtime/pkg/multicluster"
+	clusterinventoryapi "sigs.k8s.io/multicluster-runtime/providers/cluster-inventory-api"
+	"sigs.k8s.io/multicluster-runtime/providers/cluster-inventory-api/kubeconfigstrategy"
 	kindprovider "sigs.k8s.io/multicluster-runtime/providers/kind"
-	"sigs.k8s.io/multicluster-runtime/providers/kubeconfig"
 
 	"github.com/r0bnet/crsync/cmd/config"
 	crsynccontroller "github.com/r0bnet/crsync/internal/controller"
@@ -36,6 +39,7 @@ var (
 func init() {
 	utilruntime.Must(corev1.AddToScheme(scheme))
 	utilruntime.Must(eventsv1.AddToScheme(scheme))
+	utilruntime.Must(clusterinventoryv1alpha1.AddToScheme(scheme))
 }
 
 func main() {
@@ -43,9 +47,6 @@ func main() {
 	var metricsAddr string
 	var probeAddr string
 	var enableLeaderElection bool
-	var kubeconfigNamespace string
-	var kubeconfigSecretLabel string
-	var kubeconfigSecretKey string
 	var useKindProvider bool
 	var kindHubKubeconfig string
 	var kindClustersPrefix string
@@ -59,14 +60,9 @@ func main() {
 	flag.BoolVar(&enableLeaderElection, "leader-elect", false,
 		"Enable leader election for controller manager. "+
 			"Enabling this will ensure there is only one active controller manager.")
-	flag.StringVar(&kubeconfigNamespace, "kubeconfig-namespace", "kubeconfigs",
-		"Namespace where kubeconfig secrets for managed clusters are stored.")
-	flag.StringVar(&kubeconfigSecretLabel, "kubeconfig-secret-label", "",
-		"Label used to identify secrets containing kubeconfig data. If empty, the provider default (sigs.k8s.io/multicluster-runtime-kubeconfig) is used.")
-	flag.StringVar(&kubeconfigSecretKey, "kubeconfig-secret-key", "",
-		"Key in the secret data that contains the kubeconfig. If empty, the provider default (kubeconfig) is used.")
+	providerFile := access.SetupProviderFileFlag()
 	flag.BoolVar(&useKindProvider, "use-kind-provider", false,
-		"Use the kind multicluster provider instead of the kubeconfig provider. Requires --kind-hub-kubeconfig.")
+		"Use the kind multicluster provider instead of the ClusterProfile provider. Requires --kind-hub-kubeconfig.")
 	flag.StringVar(&kindHubKubeconfig, "kind-hub-kubeconfig", "",
 		"Path to the kubeconfig file for the hub kind cluster. Required when --use-kind-provider is set.")
 	flag.StringVar(&kindClustersPrefix, "kind-clusters-prefix", "",
@@ -100,8 +96,9 @@ func main() {
 
 	// Build the REST config and select the multicluster provider.
 	var (
-		restConfig *rest.Config
-		provider   multicluster.Provider
+		restConfig        *rest.Config
+		provider          multicluster.Provider
+		inventoryProvider *clusterinventoryapi.Provider
 	)
 
 	// the kind provider is only intended for local testing and development
@@ -121,13 +118,31 @@ func main() {
 		provider = kindprovider.New(kindprovider.Options{Prefix: kindClustersPrefix})
 		setupLog.Info("using kind provider", "hubKubeconfig", kindHubKubeconfig, "prefix", kindClustersPrefix)
 	} else {
+		if *providerFile == "" {
+			setupLog.Error(fmt.Errorf("--clusterprofile-provider-file is required"), "missing access provider config for the ClusterProfile provider")
+			os.Exit(1)
+		}
+
+		accessCfg, err := access.NewFromFile(*providerFile)
+		if err != nil {
+			setupLog.Error(err, "unable to load access provider config", "path", *providerFile)
+			os.Exit(1)
+		}
+
 		restConfig = ctrl.GetConfigOrDie()
-		provider = kubeconfig.New(kubeconfig.Options{
-			Namespace:             kubeconfigNamespace,
-			KubeconfigSecretLabel: kubeconfigSecretLabel, // if empty, the provider default is used: sigs.k8s.io/multicluster-runtime-kubeconfig
-			KubeconfigSecretKey:   kubeconfigSecretKey,   // if empty, the provider default is used: kubeconfig
+		inventoryProvider, err = clusterinventoryapi.New(clusterinventoryapi.Options{
+			KubeconfigStrategyOption: kubeconfigstrategy.Option{
+				AccessProvider: &kubeconfigstrategy.AccessProviderOption{
+					Provider: accessCfg,
+				},
+			},
 		})
-		setupLog.Info("using kubeconfig provider")
+		if err != nil {
+			setupLog.Error(err, "unable to create ClusterProfile provider")
+			os.Exit(1)
+		}
+		provider = inventoryProvider
+		setupLog.Info("using ClusterProfile provider", "providerFile", *providerFile)
 	}
 
 	mgr, err := mcmanager.New(restConfig, provider, ctrl.Options{
@@ -142,6 +157,14 @@ func main() {
 	if err != nil {
 		setupLog.Error(err, "unable to create multicluster manager")
 		os.Exit(1)
+	}
+
+	// The ClusterProfile provider watches ClusterProfiles through the manager's hub client.
+	if inventoryProvider != nil {
+		if err := inventoryProvider.SetupWithManager(mgr); err != nil {
+			setupLog.Error(err, "unable to set up ClusterProfile provider")
+			os.Exit(1)
+		}
 	}
 
 	// Resolve configured resources to concrete GVKs. Resources without a

@@ -13,7 +13,6 @@ import (
 	mcbuilder "sigs.k8s.io/multicluster-runtime/pkg/builder"
 	mccontroller "sigs.k8s.io/multicluster-runtime/pkg/controller"
 	mcmanager "sigs.k8s.io/multicluster-runtime/pkg/manager"
-	"sigs.k8s.io/multicluster-runtime/pkg/multicluster"
 	mcreconcile "sigs.k8s.io/multicluster-runtime/pkg/reconcile"
 )
 
@@ -81,7 +80,7 @@ func (r *crsyncFromHubReconciler) Reconcile(ctx context.Context, req mcreconcile
 	logger = logger.WithValues("cluster", clusterName)
 	ctx = log.IntoContext(ctx, logger)
 
-	spokeCluster, err := r.clusters.GetCluster(ctx, multicluster.ClusterName(clusterName))
+	spokeCluster, err := r.clusters.GetCluster(ctx, clusterNameFromLabel(clusterName))
 	if err != nil {
 		return ctrl.Result{}, fmt.Errorf("get spoke cluster %s: %w", clusterName, err)
 	}

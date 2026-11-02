@@ -16,6 +16,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 	"sigs.k8s.io/controller-runtime/pkg/log"
+	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 	mcbuilder "sigs.k8s.io/multicluster-runtime/pkg/builder"
 	mccontroller "sigs.k8s.io/multicluster-runtime/pkg/controller"
 	mcmanager "sigs.k8s.io/multicluster-runtime/pkg/manager"
@@ -69,7 +70,10 @@ func (r *crsyncFromSpokeReconciler) SetupWithManager(mgr mcmanager.Manager, maxC
 // Reconcile handles a reconcile request from any engaged cluster.
 func (r *crsyncFromSpokeReconciler) Reconcile(ctx context.Context, req mcreconcile.Request) (ctrl.Result, error) {
 	clusterName := string(req.ClusterName)
-	hubNS := hubNamespace(clusterName, req.Namespace)
+	hubNS, err := hubNamespace(clusterName, req.Namespace)
+	if err != nil {
+		return ctrl.Result{}, reconcile.TerminalError(err)
+	}
 
 	logger := log.FromContext(ctx).WithValues(
 		"cluster", clusterName,
@@ -215,7 +219,7 @@ func buildTarget(source *unstructured.Unstructured, gvk schema.GroupVersionKind,
 	labels := make(map[string]string)
 	maps.Copy(labels, source.GetLabels())
 
-	labels[LabelSourceCluster] = clusterName
+	labels[LabelSourceCluster] = clusterLabelValue(clusterName)
 	labels[LabelSourceNamespace] = source.GetNamespace()
 	labels[LabelSourceName] = source.GetName()
 
@@ -229,14 +233,10 @@ func buildTarget(source *unstructured.Unstructured, gvk schema.GroupVersionKind,
 	return target
 }
 
-// hubNamespace returns the hub namespace for a given spoke cluster and source namespace.
-func hubNamespace(clusterName, sourceNamespace string) string {
-	return clusterName + "--" + sourceNamespace
-}
-
 // ensureHubNamespace ensures the hub namespace exists and carries the correct
 // source labels. If the namespace is missing it is created. If it already
-// exists but the labels have drifted they are corrected via an update.
+// exists but the labels have drifted they are corrected via an update, unless
+// it belongs to a different cluster (an encoding collision).
 func (r *crsyncFromSpokeReconciler) ensureHubNamespace(ctx context.Context, hubNS, clusterName, sourceNamespace string) error {
 	ns := &corev1.Namespace{
 		ObjectMeta: metav1.ObjectMeta{Name: hubNS},
@@ -245,7 +245,11 @@ func (r *crsyncFromSpokeReconciler) ensureHubNamespace(ctx context.Context, hubN
 		if ns.Labels == nil {
 			ns.Labels = make(map[string]string)
 		}
-		ns.Labels[LabelSourceCluster] = clusterName
+		clusterLabel := clusterLabelValue(clusterName)
+		if owner, ok := ns.Labels[LabelSourceCluster]; ok && owner != clusterLabel {
+			return fmt.Errorf("hub namespace %s belongs to cluster %q", hubNS, owner)
+		}
+		ns.Labels[LabelSourceCluster] = clusterLabel
 		ns.Labels[LabelSourceNamespace] = sourceNamespace
 		return nil
 	})

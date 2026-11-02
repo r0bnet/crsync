@@ -14,10 +14,13 @@ metrics:
 probes:
   bindAddress: ":8081"
 
-kubeconfig:
-  namespace: kubeconfigs
-  secretLabel: "" # default: sigs.k8s.io/multicluster-runtime-kubeconfig
-  secretKey: "" # default: kubeconfig
+clusterProfile:
+  # accessProvider: exec plugin that turns a ClusterProfile's accessProviders entry into credentials.
+  # Mounted as an image volume. v0.1.3, not v0.1.2: the v0.1.2 arm64 image ships an amd64 binary.
+  accessProvider:
+    name: kubeconfig-secretreader
+    image: registry.k8s.io/cluster-inventory-api/kubeconfig-secretreader:v0.1.3
+    pullPolicy: IfNotPresent
 
 concurrency:
   # hub: max concurrent reconciles for hub-side controllers (resource sync from hub and secret sync from hub to spokes).

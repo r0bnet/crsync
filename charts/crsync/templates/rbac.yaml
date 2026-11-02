@@ -113,8 +113,16 @@ rules:
   verbs:
   - create
   - patch
-{{/* Kubeconfig provider: watches secrets in the kubeconfig namespace */}}
-{{/* (covered by the secrets rule above) */}}
+{{/* ClusterProfile provider: watches the cluster inventory */}}
+- apiGroups:
+  - multicluster.x-k8s.io
+  resources:
+  - clusterprofiles
+  verbs:
+  - get
+  - list
+  - watch
+{{/* Access plugin reads kubeconfig secrets (covered by the secrets rule above) */}}
 {{/* --- Dynamic rules from configured GVKs --- */}}
 {{- range .Values.config.resources }}
 - apiGroups:

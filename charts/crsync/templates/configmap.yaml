@@ -21,3 +21,16 @@ data:
       - {{ . | quote }}
     {{- end }}
     {{- end }}
+  clusterprofile-provider.json: |
+    {
+      "providers": [
+        {
+          "name": {{ .Values.clusterProfile.accessProvider.name | quote }},
+          "execConfig": {
+            "apiVersion": "client.authentication.k8s.io/v1",
+            "command": "/plugin/bin/{{ .Values.clusterProfile.accessProvider.name }}-plugin",
+            "provideClusterInfo": true
+          }
+        }
+      ]
+    }

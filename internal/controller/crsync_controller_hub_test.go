@@ -187,3 +187,32 @@ func TestHubReconcile_spokeClusterNotFound(t *testing.T) {
 		t.Fatal("expected error when spoke cluster is not found")
 	}
 }
+
+func TestHubReconcile_clusterProfileLabelDecoded(t *testing.T) {
+	sourceObj := newSpokeResource("default", "my-res", map[string]any{"key": "value"}, nil)
+	hubCopy := newHubCopy("fleet-spoke1--default", "my-res",
+		map[string]any{"phase": "Ready"},
+		map[string]string{
+			LabelSourceCluster:   "fleet.spoke1",
+			LabelSourceNamespace: "default",
+			LabelSourceName:      "my-res",
+		},
+	)
+	sc := spokeClientWithStatus(sourceObj)
+	hc := hubClientWith(hubCopy)
+	ctx := context.Background()
+	requireHubCopy(t, hc, "fleet-spoke1--default", "my-res")
+
+	clusters := &fakeClusterProvider{
+		clusters: map[string]cluster.Cluster{"fleet/spoke1": &fakeCluster{client: sc}},
+	}
+	r := NewCRSyncFromHubReconciler(hc, clusters, testGVK)
+
+	_, err := r.Reconcile(ctx, newRequest("", "fleet-spoke1--default", "my-res"))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !slices.Equal(clusters.requested, []string{"fleet/spoke1"}) {
+		t.Fatalf("expected exactly one lookup of fleet/spoke1, got %v", clusters.requested)
+	}
+}

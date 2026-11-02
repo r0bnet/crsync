@@ -94,11 +94,16 @@ func (r *secretReconciler) SetupWithManager(mgr mcmanager.Manager, allowedSecret
 // ClusterName is left empty so the request targets the hub.
 func spokeSecretToHubRequest(clusterName multicluster.ClusterName, _ cluster.Cluster) handler.TypedEventHandler[client.Object, mcreconcile.Request] {
 	return handler.TypedEnqueueRequestsFromMapFunc(
-		func(_ context.Context, obj client.Object) []mcreconcile.Request {
+		func(ctx context.Context, obj client.Object) []mcreconcile.Request {
+			hubNS, err := hubNamespace(string(clusterName), obj.GetNamespace())
+			if err != nil {
+				log.FromContext(ctx).Error(err, "dropping spoke secret event")
+				return nil
+			}
 			return []mcreconcile.Request{{
 				Request: reconcile.Request{
 					NamespacedName: types.NamespacedName{
-						Namespace: string(clusterName) + "--" + obj.GetNamespace(),
+						Namespace: hubNS,
 						Name:      obj.GetName(),
 					},
 				},
@@ -142,7 +147,7 @@ func (r *secretReconciler) Reconcile(ctx context.Context, req mcreconcile.Reques
 	logger = logger.WithValues("targetCluster", clusterName, "targetNamespace", targetNamespace)
 	ctx = log.IntoContext(ctx, logger)
 
-	spokeCluster, err := r.clusters.GetCluster(ctx, multicluster.ClusterName(clusterName))
+	spokeCluster, err := r.clusters.GetCluster(ctx, clusterNameFromLabel(clusterName))
 	if err != nil {
 		return ctrl.Result{}, fmt.Errorf("get spoke cluster %s: %w", clusterName, err)
 	}
@@ -228,7 +233,7 @@ func (r *secretReconciler) reconcileOrphanedDelete(ctx context.Context, req mcre
 		return ctrl.Result{}, err
 	}
 
-	spokeCluster, err := r.clusters.GetCluster(ctx, multicluster.ClusterName(clusterName))
+	spokeCluster, err := r.clusters.GetCluster(ctx, clusterNameFromLabel(clusterName))
 	if err != nil {
 		return ctrl.Result{}, fmt.Errorf("get spoke cluster %s: %w", clusterName, err)
 	}

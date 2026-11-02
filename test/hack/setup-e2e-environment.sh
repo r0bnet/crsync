@@ -50,8 +50,8 @@ while [[ $# -gt 0 ]]; do
 done
 
 # ---------------------------------------------------------------------------
-# Step 1: Create kind clusters with in-cluster networking and spoke
-#         kubeconfig secrets.
+# Step 1: Create kind clusters with in-cluster networking and register the
+#         spokes as ClusterProfiles on the hub.
 # ---------------------------------------------------------------------------
 echo "=== Step 1: Creating kind clusters ==="
 bash "${SCRIPT_DIR}/setup-kind-clusters.sh" \
@@ -89,7 +89,7 @@ echo "=== Step 3: Building and loading controller image ==="
 docker build -t "${CONTROLLER_IMAGE}" -f "${SCRIPT_DIR}/Dockerfile" "${WORKSPACE}"
 
 # Load into the hub kind cluster.
-kind -- load docker-image "${CONTROLLER_IMAGE}" --name "${HUB_CLUSTER}"
+kind load docker-image "${CONTROLLER_IMAGE}" --name "${HUB_CLUSTER}"
 
 # ---------------------------------------------------------------------------
 # Step 4: Deploy the Helm chart to the hub cluster, using the loaded image and
@@ -104,7 +104,7 @@ kubectl --context "kind-${HUB_CLUSTER}" create namespace "${RELEASE_NAMESPACE}" 
 IMAGE_REGISTRY="${CONTROLLER_IMAGE%:*}"
 IMAGE_TAG="${CONTROLLER_IMAGE##*:}"
 
-helm -- upgrade --install crsync "${CHART_DIR}" \
+helm upgrade --install crsync "${CHART_DIR}" \
 --kube-context "kind-${HUB_CLUSTER}" \
 --namespace "${RELEASE_NAMESPACE}" \
 --set "image.registry=${IMAGE_REGISTRY}" \

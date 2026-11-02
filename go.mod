@@ -6,8 +6,10 @@ require (
 	k8s.io/api v0.37.0
 	k8s.io/apimachinery v0.37.0
 	k8s.io/client-go v0.37.0
+	sigs.k8s.io/cluster-inventory-api v0.1.2
 	sigs.k8s.io/controller-runtime v0.25.2
 	sigs.k8s.io/multicluster-runtime v0.25.2
+	sigs.k8s.io/multicluster-runtime/providers/cluster-inventory-api v0.25.2
 	sigs.k8s.io/multicluster-runtime/providers/kind v0.25.2
 	sigs.k8s.io/yaml v1.6.0
 )
@@ -38,7 +40,7 @@ require (
 	github.com/go-openapi/swag/stringutils v0.27.1 // indirect
 	github.com/go-openapi/swag/typeutils v0.27.1 // indirect
 	github.com/go-openapi/swag/yamlutils v0.27.1 // indirect
-	github.com/google/gnostic-models v0.7.0 // indirect
+	github.com/google/gnostic-models v0.7.1 // indirect
 	github.com/google/safetext v0.0.0-20220905092116-b49f7bc46da2 // indirect
 	github.com/google/uuid v1.6.0 // indirect
 	github.com/inconshreveable/mousetrap v1.1.0 // indirect

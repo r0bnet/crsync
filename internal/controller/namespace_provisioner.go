@@ -46,7 +46,7 @@ func (n *namespaceDeprovisioner) Engage(ctx context.Context, clusterName multicl
 		bgCtx := context.Background()
 		nsList := &corev1.NamespaceList{}
 		if err := n.hubClient.List(bgCtx, nsList, client.MatchingLabels{
-			LabelSourceCluster: string(clusterName),
+			LabelSourceCluster: clusterLabelValue(string(clusterName)),
 		}); err != nil {
 			logger.Error(err, "failed to list namespaces for cleanup")
 			return
