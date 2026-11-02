@@ -20,9 +20,7 @@ crsync writes hub copies with server-side apply (field manager `crsync`) and onl
 
 ## Events on the workload cluster
 
-With `eventReplay.enabled=true`, crsync copies hub Events onto the user's `XDatabase` on the workload cluster. That includes Events on composed resources: crsync walks `ownerReferences` from the composed `Object` up to the hub copy. Users see them in `kubectl describe xdatabase orders`. Copied notes name only the composed resource's kind (`Object: ...`), never its hub name. crsync's own Events (for example `FieldConflict`) aren't copied, and Events whose owner chain can't be read are skipped.
-
-The walk needs `get` on every type in the chain. By default the chart grants `get` on `*/*`. Scope it with:
+With `eventReplay.enabled=true`, users see hub Events, including those of composed resources, in `kubectl describe xdatabase orders`. To scope the owner walk's RBAC:
 
 ```bash
 helm upgrade crsync charts/crsync --reuse-values \
@@ -32,7 +30,7 @@ helm upgrade crsync charts/crsync --reuse-values \
 
 ### Example: a mistake the user can fix
 
-`team` is free text in the XRD, so `xdatabase-invalid-team.yaml` (`team: "Payments Team"`) is accepted on the workload cluster. On the hub the composition turns it into a label, and Kubernetes rejects the space:
+`team` is free text in the XRD, but the composition turns it into a label, so `team: "Payments Team"` fails on the hub:
 
 ```bash
 kubectl --context kind-crsyncspoke1 apply -f examples/crossplane/xdatabase-invalid-team.yaml
@@ -43,18 +41,18 @@ kubectl --context kind-crsyncspoke1 patch xdatabase payments --type=merge -p '{"
 #   Ready=True, plus "Object: Successfully requested creation ..." from the provider
 ```
 
-The Warning comes from Crossplane composing on the XR itself, because provider-kubernetes's `Object` CRD already validates the embedded labels. The provider's own Events reach the user through the ownerReference walk. Messages like this one contain hub names (here the composed `Object`'s name), which crsync can't scrub.
+Messages like this one can contain hub names, which crsync can't scrub.
 
 ## Connection Secrets on the workload cluster
 
-The composition makes the `Object` write a connection Secret, `<name>-connection`, with the database `endpoint`. Crossplane owns it through the `Object`, which is owned by the XR, so crsync's write-back finds the hub copy by owner walk. `install.sh` enables it with `config.writeBack` for Secrets:
+The `Object` writes a connection Secret, `<name>-connection`, owned by the `Object` and thus by the XR. `install.sh` enables write-back for Secrets, so it appears next to the user's `XDatabase` and goes away with it:
 
 ```bash
 kubectl --context kind-crsyncspoke1 get secret orders-connection -o jsonpath='{.data.endpoint}' | base64 -d
 #   orders.db.example.internal:5432
 ```
 
-Deleting the `XDatabase` deletes the Secret. A hub controller that writes Secrets without ownerReferences can opt them in with the annotation `crsync.r0bnet.github.io/write-back: "true"` instead.
+Secrets written without ownerReferences can opt in with `crsync.r0bnet.github.io/write-back: "true"`.
 
 ## Run it
 

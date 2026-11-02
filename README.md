@@ -14,16 +14,14 @@ default/orders  ── spec, labels ──▶  fleet-spoke1--default/orders ─�
                 ◀── Events (opt-in)
 ```
 
-- **Discovery:** spokes are [ClusterProfiles](https://github.com/kubernetes-sigs/cluster-inventory-api) on the hub. crsync connects to a cluster once its profile has `ControlPlaneHealthy=True`, and gets credentials through the profile's `accessProviders` and an exec plugin (`kubeconfig-secretreader` in the chart). Deleting the profile disconnects the cluster and deletes its hub namespaces. Restarts, leader changes and credential changes keep them.
-- **Hub namespaces:** each spoke namespace gets one hub namespace, `<cluster>--<namespace>`. A cluster `fleet/spoke1` becomes `fleet-spoke1--default`. crsync refuses a namespace that already belongs to another cluster.
-- **Labels (contract):** every hub copy carries `crsync.r0bnet.github.io/source-cluster` (e.g. `fleet.spoke1`), `source-namespace` and `source-name`. crsync sets them after copying the user's labels, so users can't override them. Compositions and policies may select on them; [examples/crossplane](examples/crossplane) uses the cluster label to pick a per-cluster `ClusterProviderConfig`.
-- **Spec (spoke → hub):** crsync writes hub copies with server-side apply (field manager `crsync`) and only sends what it got from the spoke: `spec`, labels, annotations. Fields that only hub controllers set (e.g. Crossplane's `spec.crossplane.compositionRef`) survive every resync. If a hub controller changed a field the spoke also sets, crsync records a `FieldConflict` Warning Event on the hub copy and the spoke's value wins.
-- **Status (hub → spoke):** status changes on the hub copy are copied to the spoke object.
-- **Deletion:** a finalizer on the spoke object keeps it until the hub copy is gone, including any finalizers hub controllers put on it.
-- **Write-back (hub → spoke, opt-in):** see [Write-back](#write-back).
-- **Events (hub → spoke, opt-in):** see [Event replay](#event-replay).
+- **Discovery:** spokes are [ClusterProfiles](https://github.com/kubernetes-sigs/cluster-inventory-api) with `ControlPlaneHealthy=True`; credentials come from the profile's `accessProviders` via an exec plugin. Deleting a profile deletes its hub namespaces; restarts don't.
+- **Hub namespaces:** `<cluster>--<namespace>`, e.g. `fleet-spoke1--default` for cluster `fleet/spoke1`.
+- **Labels (contract):** hub copies carry `crsync.r0bnet.github.io/source-cluster` (e.g. `fleet.spoke1`), `source-namespace` and `source-name`. Users can't override them; compositions may select on them.
+- **Spec (spoke → hub):** server-side apply with field manager `crsync`, sending only `spec`, labels and annotations. Hub-only fields survive; on a conflict the spoke wins and crsync records a `FieldConflict` Event on the hub copy.
+- **Status (hub → spoke)** is copied back. A finalizer keeps the spoke object until the hub copy is gone.
+- **Opt-in:** [write-back](#write-back) and [event replay](#event-replay).
 
-Anything crsync shouldn't know about, such as cluster-specific changes to hub copies, belongs on the hub. [examples/mutating-admission-policy](examples/mutating-admission-policy) shows a `MutatingAdmissionPolicy` for that.
+Cluster-specific changes to hub copies belong on the hub, e.g. a [MutatingAdmissionPolicy](examples/mutating-admission-policy).
 
 ## Quick start on kind
 
@@ -78,31 +76,20 @@ crsync talks to spokes with the credentials from their kubeconfig Secrets. Those
 
 ## Event replay
 
-With `--replay-events`, Events on the hub are copied onto the spoke object, so users can see why their resource isn't ready without access to the hub.
+`--replay-events` copies hub Events onto the spoke object, so users see why their resource isn't ready.
 
-- Events on the hub copy itself are copied as they are.
-- Events on resources created *from* the hub copy (e.g. Crossplane's composed resources) are attributed by walking `controller` ownerReferences up to the hub copy: at most 5 hops, within the namespace. The copied note names only the resource's kind (`Object: ...`), never its hub name. Provider messages themselves can still contain hub details.
-- If any object in the chain can't be read, or has no controlling owner, the Event is skipped.
-- crsync's own Events (e.g. `FieldConflict`) are not copied.
-- Updates to an Event (count, last seen) update the same spoke Event.
+- Events on resources created from the hub copy (e.g. composed resources) are found by walking `controller` ownerReferences (max 5 hops). The note names only the kind (`Object: ...`), not the hub name.
+- Events whose owner chain can't be read are skipped, and so are crsync's own.
 
-It's off by default because the owner walk needs `get` on every type in the chain. That's `*/*` unless you list them in `ownerResources`. When enabled, crsync also watches all Events on the hub.
+Off by default: the walk needs `get` on every owner type, which is `*/*` unless you list them in `ownerResources`.
 
 ## Write-back
 
-Hub controllers often create objects users need, such as a connection Secret. With `writeBack` set, crsync copies hub objects of those GVKs into the source namespace on the spoke. An object is copied if either:
+`writeBack` lists hub GVKs, e.g. Secrets, to copy into the source namespace on the spoke. An object is copied if its owner chain leads to a hub copy, or if it has `crsync.r0bnet.github.io/write-back: "true"` (for objects without owners).
 
-1. its `controller` ownerReferences lead to a hub copy (same walk as [event replay](#event-replay)), or
-2. it has the annotation `crsync.r0bnet.github.io/write-back: "true"`, for objects without owners. Set it in the composition, or with a `MutatingAdmissionPolicy` for objects a controller writes.
-
-The copy keeps the name and everything except `metadata` and `status` (a Secret keeps its `type` and `data`). Hub labels and annotations aren't copied.
-
-- Copies carry `crsync.r0bnet.github.io/write-back-copy: "true"`. crsync never overwrites or deletes an object without it, and records a `WriteBackConflict` Warning instead.
-- Owned objects get an ownerReference to the spoke source, so deleting the source deletes the copy. Annotated objects have no known source: their Warnings go on the hub object, and their copy is removed only with the hub object.
-- Deleting the hub object deletes the copy. crsync also watches its copies on the spoke, so edited or deleted copies are repaired, and copies whose hub object disappeared while crsync was down are removed at startup.
-- If the spoke doesn't serve the GVK, crsync records a `WriteBackTypeMissing` Warning and retries every 5 minutes.
-- On spokes, crsync caches only its own copies of the write-back GVKs, not every Secret.
-- A GVK can't be in `resources` and `writeBack` at once.
+- The copy keeps the name and everything but `metadata` and `status`, and gets the label `crsync.r0bnet.github.io/write-back-copy: "true"`. crsync never touches objects without that label (`WriteBackConflict` Warning).
+- Owned copies get an ownerReference to the spoke object. All copies go when their hub object goes.
+- A GVK the spoke doesn't serve gives a `WriteBackTypeMissing` Warning and is retried. A GVK can't be in both `resources` and `writeBack`.
 
 ## Development
 
@@ -113,53 +100,13 @@ go vet ./...
 
 `test/hack/setup-e2e-environment.sh` is the end-to-end setup: it builds the image from `test/hack/Dockerfile`, registers the spokes as ClusterProfiles in the `fleet` namespace (`PROFILE_NAMESPACE`), and installs the chart.
 
-## Debugging the Controller Locally
+## Debugging locally
 
-This guide explains how to run and debug the crsync controller on your local machine using [kind](https://kind.sigs.k8s.io/) clusters.
+`--use-kind-provider` discovers spokes as kind clusters through Docker, without ClusterProfiles or the access plugin. Needs `kind`, `kubectl` and the VS Code Go extension.
 
-For local debugging the controller uses the kind multicluster provider (`--use-kind-provider`), which discovers spoke clusters directly via Docker — no in-cluster networking, ClusterProfiles or access plugin are needed.
+`test/hack/setup-local-dev-clusters.sh` creates a hub (`crsynchub`) and spokes (`crsyncspoke1`, …) if missing, and writes the hub kubeconfig to `/tmp/kubeconfig-crsynchub`. It's idempotent, so it works as a pre-launch task. Copy `config/samples/config.yaml` to `config/local-dev.yaml` (gitignored) and list the GVKs to sync.
 
-### Prerequisites
-
-- [`kind`](https://kind.sigs.k8s.io/docs/user/quick-start/#installation)
-- [`kubectl`](https://kubernetes.io/docs/tasks/tools/)
-- A [VS Code Go debugger](https://marketplace.visualstudio.com/items?itemName=golang.go) setup
-
-### How it works
-
-The `test/hack/setup-local-dev-clusters.sh` script creates:
-
-- one **hub** kind cluster (default name: `crsynchub`)
-- one or more **spoke** kind clusters (default prefix: `crsyncspoke`, so `crsyncspoke1`, `crsyncspoke2`, …)
-
-It also exports the hub kubeconfig to a fixed path (`/tmp/kubeconfig-<hub-name>`) so the VS Code launch configuration can reference it without knowing a randomly-generated filename.
-
-The script is **idempotent**: if all clusters already exist it skips creation and only refreshes the kubeconfig file. This makes it safe to use as a VS Code pre-task that runs on every debug session.
-
-### Creating the local controller config
-
-The controller requires a config file that tells it which resources to sync. For local development, create `config/local-dev.yaml` based on the provided sample:
-
-```bash
-cp config/samples/config.yaml \
-   config/local-dev.yaml
-```
-
-Then edit the file to include the resource GVKs you want to sync during your session. For example:
-
-```yaml
-# List of GVKs the controller will watch across all clusters.
-resources:
-  - group: ""
-    version: "v1"
-    kind: "ConfigMap"
-```
-
-`config/local-dev.yaml` is listed in `config/.gitignore` and will not be committed.
-
-### Setting up the VS Code launch target
-
-Create or extend `.vscode/launch.json` in the workspace root with an entry for the controller. The `preLaunchTask` runs the cluster setup script before each debug session:
+`.vscode/launch.json`:
 
 ```json
 {
@@ -183,7 +130,7 @@ Create or extend `.vscode/launch.json` in the workspace root with an entry for t
 }
 ```
 
-Add the corresponding task to `.vscode/tasks.json`:
+`.vscode/tasks.json`:
 
 ```json
 {
@@ -226,29 +173,4 @@ Add the corresponding task to `.vscode/tasks.json`:
 }
 ```
 
-When you start the `crsync: debug (kind)` launch target, VS Code runs the setup script first. Because the script is idempotent, it completes quickly if the clusters are already running.
-
-### Starting fresh: cleaning up existing clusters
-
-To delete all local dev clusters and start from scratch, run the cleanup script manually:
-
-```bash
-./test/hack/cleanup-kind-clusters.sh
-```
-
-Pass the same `--hub` and `--spoke-prefix` values you used during setup if you deviated from the defaults:
-
-```bash
-./test/hack/cleanup-kind-clusters.sh \
-  --hub crsynchub \
-  --spokes 2 \
-  --spoke-prefix crsyncspoke
-```
-
-Alternatively, pass `--cleanup` to the setup script itself to tear down and recreate all clusters in one step:
-
-```bash
-./test/hack/setup-local-dev-clusters.sh --cleanup
-```
-
-This is useful when you want to wipe cluster state but keep the debug workflow running. You can also wire it as a separate VS Code task that you invoke manually when needed.
+Clean up with `test/hack/cleanup-kind-clusters.sh` (pass `--hub`, `--spokes`, `--spoke-prefix` if you changed them), or recreate everything with `setup-local-dev-clusters.sh --cleanup`.
