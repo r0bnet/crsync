@@ -19,12 +19,14 @@ import (
 )
 
 // fakeClusterProvider implements ClusterProvider by mapping cluster names to
-// pre-built fake clusters.
+// pre-built fake clusters. It records every requested cluster name.
 type fakeClusterProvider struct {
-	clusters map[string]cluster.Cluster
+	clusters  map[string]cluster.Cluster
+	requested []string
 }
 
 func (f *fakeClusterProvider) GetCluster(_ context.Context, name multicluster.ClusterName) (cluster.Cluster, error) {
+	f.requested = append(f.requested, string(name))
 	cl, ok := f.clusters[string(name)]
 	if !ok {
 		return nil, fmt.Errorf("cluster %q not found", name)

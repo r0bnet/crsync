@@ -2,6 +2,7 @@ package controller
 
 import (
 	"context"
+	"slices"
 	"testing"
 
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
@@ -36,6 +37,18 @@ func newHubCopy(namespace, derivedName string, status map[string]any, labels map
 		obj.SetLabels(labels)
 	}
 	return obj
+}
+
+// requireHubCopy fails unless the hub copy is readable via the test GVK, so a
+// test can't pass by hitting the reconciler's not-found early return.
+func requireHubCopy(t *testing.T, hc client.Client, namespace, name string) {
+	t.Helper()
+	obj := &unstructured.Unstructured{}
+	obj.SetGroupVersionKind(testGVK)
+	err := hc.Get(context.Background(), client.ObjectKey{Namespace: namespace, Name: name}, obj)
+	if err != nil {
+		t.Fatalf("precondition: hub copy %s/%s not readable via test GVK: %v", namespace, name, err)
+	}
 }
 
 func TestHubReconcile_statusSync(t *testing.T) {
@@ -103,10 +116,12 @@ func TestHubReconcile_missingSourceLabels(t *testing.T) {
 	hubCopy := newHubCopy("spoke1--default", "my-res", map[string]any{"phase": "Ready"}, nil)
 	hc := hubClientWith(hubCopy)
 	ctx := context.Background()
+	requireHubCopy(t, hc, "spoke1--default", "my-res")
 
-	r := NewCRSyncFromHubReconciler(hc, &fakeClusterProvider{
+	clusters := &fakeClusterProvider{
 		clusters: map[string]cluster.Cluster{"spoke1": &fakeCluster{client: spokeClient()}},
-	}, testGVK)
+	}
+	r := NewCRSyncFromHubReconciler(hc, clusters, testGVK)
 
 	result, err := r.Reconcile(ctx, newRequest("", "spoke1--default", "my-res"))
 	if err != nil {
@@ -114,6 +129,9 @@ func TestHubReconcile_missingSourceLabels(t *testing.T) {
 	}
 	if result.RequeueAfter != 0 {
 		t.Fatalf("unexpected requeue: %v", result)
+	}
+	if len(clusters.requested) != 0 {
+		t.Fatalf("expected no spoke cluster lookup without source labels, got %v", clusters.requested)
 	}
 }
 
@@ -129,10 +147,12 @@ func TestHubReconcile_sourceNotFoundOnSpoke(t *testing.T) {
 	hc := hubClientWith(hubCopy)
 	sc := spokeClient() // no source on spoke
 	ctx := context.Background()
+	requireHubCopy(t, hc, "spoke1--default", "my-res")
 
-	r := NewCRSyncFromHubReconciler(hc, &fakeClusterProvider{
+	clusters := &fakeClusterProvider{
 		clusters: map[string]cluster.Cluster{"spoke1": &fakeCluster{client: sc}},
-	}, testGVK)
+	}
+	r := NewCRSyncFromHubReconciler(hc, clusters, testGVK)
 
 	result, err := r.Reconcile(ctx, newRequest("", "spoke1--default", "my-res"))
 	if err != nil {
@@ -140,6 +160,9 @@ func TestHubReconcile_sourceNotFoundOnSpoke(t *testing.T) {
 	}
 	if result.RequeueAfter != 0 {
 		t.Fatalf("unexpected requeue: %v", result)
+	}
+	if !slices.Equal(clusters.requested, []string{"spoke1"}) {
+		t.Fatalf("expected exactly one lookup of spoke1, got %v", clusters.requested)
 	}
 }
 
