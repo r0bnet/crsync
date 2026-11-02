@@ -166,6 +166,45 @@ func TestHubReconcile_sourceNotFoundOnSpoke(t *testing.T) {
 	}
 }
 
+// A type without a status subresource must not make the reconciler retry forever.
+func TestHubReconcile_noStatusSubresource(t *testing.T) {
+	sourceObj := newSpokeResource("default", "my-res", map[string]any{"key": "value"}, nil)
+	hubCopy := newHubCopy("spoke1--default", "my-res",
+		map[string]any{"phase": "Ready"},
+		map[string]string{
+			LabelSourceCluster:   "spoke1",
+			LabelSourceNamespace: "default",
+			LabelSourceName:      "my-res",
+		},
+	)
+	sc := spokeClient(sourceObj) // no status subresource
+	hc := hubClientWith(hubCopy)
+	ctx := context.Background()
+	requireHubCopy(t, hc, "spoke1--default", "my-res")
+
+	r := NewCRSyncFromHubReconciler(hc, &fakeClusterProvider{
+		clusters: map[string]cluster.Cluster{"spoke1": &fakeCluster{client: sc}},
+	}, testGVK)
+
+	result, err := r.Reconcile(ctx, newRequest("", "spoke1--default", "my-res"))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if result.RequeueAfter != 0 {
+		t.Fatalf("unexpected requeue: %v", result)
+	}
+
+	got := &unstructured.Unstructured{}
+	got.SetGroupVersionKind(testGVK)
+	err = sc.Get(ctx, client.ObjectKey{Namespace: "default", Name: "my-res"}, got)
+	if err != nil {
+		t.Fatalf("get source: %v", err)
+	}
+	if _, ok := got.Object["status"]; ok {
+		t.Errorf("expected no status on spoke resource, got %v", got.Object["status"])
+	}
+}
+
 func TestHubReconcile_spokeClusterNotFound(t *testing.T) {
 	hubCopy := newHubCopy("unknown-cluster--default", "my-res",
 		map[string]any{"phase": "Ready"},
