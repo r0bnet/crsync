@@ -17,11 +17,11 @@ default/orders  ── spec, labels ──▶  fleet-spoke1--default/orders ─�
 - **Discovery:** spokes are [ClusterProfiles](https://github.com/kubernetes-sigs/cluster-inventory-api) with `ControlPlaneHealthy=True`; credentials come from the profile's `accessProviders` via an exec plugin. Deleting a profile deletes its hub namespaces; restarts don't.
 - **Hub namespaces:** `<cluster>--<namespace>`, e.g. `fleet-spoke1--default` for cluster `fleet/spoke1`.
 - **Labels (contract):** hub copies carry `crsync.r0bnet.github.io/source-cluster` (e.g. `fleet.spoke1`), `source-namespace` and `source-name`. Users can't override them; compositions may select on them.
-- **Spec (spoke → hub):** server-side apply with field manager `crsync`, sending only `spec`, labels and annotations. Hub-only fields survive; on a conflict the spoke wins and crsync records a `FieldConflict` Event on the hub copy.
+- **Spec (spoke → hub):** server-side apply with field manager `crsync`, sending every top-level field except `metadata` and `status` (e.g. `spec`, or `data` for a ConfigMap), plus labels and annotations. Hub-only fields survive; on a conflict the spoke wins and crsync records a `FieldConflict` Event on the hub copy.
 - **Status (hub → spoke)** is copied back. A finalizer keeps the spoke object until the hub copy is gone.
 - **Opt-in:** [write-back](#write-back) and [event replay](#event-replay).
 
-Everything in `spec`, labels and annotations reaches the hub controller. Cluster-specific changes and fields users must not set belong on the hub, e.g. a [MutatingAdmissionPolicy](examples/mutating-admission-policy) (see also [examples/crossplane](examples/crossplane#hub-owned-fields)).
+Every field except `status` and most of `metadata` reaches the hub controller, labels and annotations included. Cluster-specific changes and fields users must not set belong on the hub, e.g. a [MutatingAdmissionPolicy](examples/mutating-admission-policy) (see also [examples/crossplane](examples/crossplane#hub-owned-fields)).
 
 ## Quick start on kind
 

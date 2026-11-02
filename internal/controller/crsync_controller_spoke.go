@@ -11,6 +11,7 @@ import (
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/tools/events"
@@ -238,20 +239,12 @@ func (r *crsyncFromSpokeReconciler) deleteHubCopy(ctx context.Context, hubNS, na
 }
 
 // buildTarget constructs an Unstructured resource for the hub by copying data
-// fields from the source and setting derivation metadata.
+// fields (see dataFields) from the source and setting derivation metadata.
 func buildTarget(source *unstructured.Unstructured, gvk schema.GroupVersionKind, clusterName, hubNS, name string) *unstructured.Unstructured {
-	target := &unstructured.Unstructured{}
+	target := &unstructured.Unstructured{Object: dataFields(source)}
 	target.SetGroupVersionKind(gvk)
 	target.SetNamespace(hubNS)
 	target.SetName(name)
-
-	// For now only copy the "spec" field; might be that this will be made configurable in the future for each GVK.
-	cpy := map[string]bool{"spec": true}
-	for k := range source.Object {
-		if cpy[k] {
-			target.Object[k] = source.Object[k]
-		}
-	}
 
 	// Merge source labels with derivation labels.
 	labels := make(map[string]string)
@@ -269,6 +262,19 @@ func buildTarget(source *unstructured.Unstructured, gvk schema.GroupVersionKind,
 	}
 
 	return target
+}
+
+// dataFields deep-copies every top-level field except metadata and status: spec for
+// most CRDs, data and binaryData for a ConfigMap.
+func dataFields(obj *unstructured.Unstructured) map[string]any {
+	out := map[string]any{}
+	for k, v := range obj.Object {
+		if k == "metadata" || k == "status" {
+			continue
+		}
+		out[k] = runtime.DeepCopyJSONValue(v)
+	}
+	return out
 }
 
 // ensureHubNamespace ensures the hub namespace exists and carries the correct

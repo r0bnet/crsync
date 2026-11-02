@@ -150,6 +150,55 @@ func TestReconcile_create(t *testing.T) {
 	}
 }
 
+// ConfigMaps keep their data outside spec, so every field but metadata and status must reach the hub.
+func TestReconcile_configMapDataCopied(t *testing.T) {
+	cmGVK := corev1.SchemeGroupVersion.WithKind("ConfigMap")
+	source := &unstructured.Unstructured{Object: map[string]any{
+		"apiVersion": "v1",
+		"kind":       "ConfigMap",
+		"metadata": map[string]any{
+			"name":      "settings",
+			"namespace": "default",
+		},
+		"data":       map[string]any{"color": "orange"},
+		"binaryData": map[string]any{"logo": "aGk="},
+		"immutable":  true,
+	}}
+	sc := spokeClient(source)
+	hc := hubClientWith(newNamespace("spoke1--default", map[string]string{
+		LabelSourceCluster:   "spoke1",
+		LabelSourceNamespace: "default",
+	}))
+	ctx := context.Background()
+
+	r := NewCRSyncFromSpokeReconciler(hc, &fakeClusterProvider{
+		clusters: map[string]cluster.Cluster{"spoke1": &fakeCluster{client: sc}},
+	}, cmGVK, events.NewFakeRecorder(10))
+
+	// The first reconcile adds the finalizer, the second creates the hub copy.
+	for range 2 {
+		_, err := r.Reconcile(ctx, newRequest("spoke1", "default", "settings"))
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+	}
+
+	hub := &corev1.ConfigMap{}
+	err := hc.Get(ctx, client.ObjectKey{Namespace: "spoke1--default", Name: "settings"}, hub)
+	if err != nil {
+		t.Fatalf("expected hub ConfigMap to exist: %v", err)
+	}
+	if hub.Data["color"] != "orange" {
+		t.Errorf("expected data.color = orange, got %v", hub.Data)
+	}
+	if string(hub.BinaryData["logo"]) != "hi" {
+		t.Errorf("expected binaryData.logo = hi, got %v", hub.BinaryData)
+	}
+	if hub.Immutable == nil || !*hub.Immutable {
+		t.Errorf("expected immutable = true, got %v", hub.Immutable)
+	}
+}
+
 func TestReconcile_update(t *testing.T) {
 	sourceCM := newSpokeResource("default", "my-cm", map[string]any{"key": "updated"}, nil)
 	sc := spokeClient(sourceCM)

@@ -11,7 +11,6 @@ import (
 	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
-	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/tools/events"
@@ -297,16 +296,10 @@ func (r *writeBackReconciler) warn(ctx context.Context, spokeClient client.Clien
 	}
 }
 
-// writeBackCopy builds the copy: every top-level field except metadata and status, plus
+// writeBackCopy builds the copy: the hub object's dataFields, plus
 // copyLabel and an ownerReference to the source when there is one.
 func writeBackCopy(hubObj *unstructured.Unstructured, target *writeBackTarget, copyLabel string) *unstructured.Unstructured {
-	out := &unstructured.Unstructured{Object: map[string]any{}}
-	for k, v := range hubObj.Object {
-		if k == "metadata" || k == "status" {
-			continue
-		}
-		out.Object[k] = runtime.DeepCopyJSONValue(v)
-	}
+	out := &unstructured.Unstructured{Object: dataFields(hubObj)}
 	out.SetName(hubObj.GetName())
 	out.SetNamespace(target.namespace)
 	out.SetLabels(map[string]string{copyLabel: "true"})
