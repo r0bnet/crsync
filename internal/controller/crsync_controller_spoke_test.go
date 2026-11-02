@@ -547,3 +547,20 @@ func TestReconcile_fieldConflictRecordsEventAndSpokeWins(t *testing.T) {
 		t.Errorf("expected the spoke value spec.size = small to win, got %q", size)
 	}
 }
+
+func TestHubCopyToSpokeRequests(t *testing.T) {
+	hubCopy := newSpokeResource("fleet-spoke1--default", "orders", nil, map[string]string{
+		LabelSourceCluster:   "fleet.spoke1",
+		LabelSourceNamespace: "default",
+		LabelSourceName:      "orders",
+	})
+	got := hubCopyToSpokeRequests(hubCopy)
+	want := newRequest("fleet/spoke1", "default", "orders")
+	if len(got) != 1 || got[0] != want {
+		t.Errorf("requests = %v, want [%v]", got, want)
+	}
+
+	if got := hubCopyToSpokeRequests(newSpokeResource("other", "orders", nil, nil)); len(got) != 0 {
+		t.Errorf("requests for an object without source labels = %v, want none", got)
+	}
+}

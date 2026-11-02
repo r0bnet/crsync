@@ -12,11 +12,16 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime/schema"
+	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/tools/events"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/cluster"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
+	"sigs.k8s.io/controller-runtime/pkg/event"
+	"sigs.k8s.io/controller-runtime/pkg/handler"
 	"sigs.k8s.io/controller-runtime/pkg/log"
+	"sigs.k8s.io/controller-runtime/pkg/predicate"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 	mcbuilder "sigs.k8s.io/multicluster-runtime/pkg/builder"
 	mccontroller "sigs.k8s.io/multicluster-runtime/pkg/controller"
@@ -64,14 +69,46 @@ func (r *crsyncFromSpokeReconciler) SetupWithManager(mgr mcmanager.Manager, maxC
 	obj := &unstructured.Unstructured{}
 	obj.SetGroupVersionKind(r.gvk)
 
+	hubObj := &unstructured.Unstructured{}
+	hubObj.SetGroupVersionKind(r.gvk)
+
 	return mcbuilder.ControllerManagedBy(mgr).
 		Named(fmt.Sprintf("crsync-spoke-%s-%s-%s", r.gvk.Group, r.gvk.Version, r.gvk.Kind)).
-		For(obj). // default is to engage only with provider clusters
-		WithEventFilter(IgnoreStatusChange()).
+		For(obj, mcbuilder.WithPredicates(IgnoreStatusChange())). // default is to engage only with provider clusters
+		// A hub copy deleted out of band, e.g. with its namespace, is recreated from its source.
+		Watches(hubObj, hubCopyDeleteToSpokeRequest,
+			mcbuilder.WithEngageWithLocalCluster(true),
+			mcbuilder.WithEngageWithProviderClusters(false),
+			mcbuilder.WithPredicates(predicate.Funcs{
+				CreateFunc:  func(event.CreateEvent) bool { return false },
+				UpdateFunc:  func(event.UpdateEvent) bool { return false },
+				DeleteFunc:  func(event.DeleteEvent) bool { return true },
+				GenericFunc: func(event.GenericEvent) bool { return false },
+			})).
 		WithOptions(mccontroller.Options{
 			MaxConcurrentReconciles: maxConcurrentReconciles,
 		}).
 		Complete(r)
+}
+
+// hubCopyDeleteToSpokeRequest maps a hub copy back to its source on the spoke.
+func hubCopyDeleteToSpokeRequest(_ multicluster.ClusterName, _ cluster.Cluster) handler.TypedEventHandler[client.Object, mcreconcile.Request] {
+	return handler.TypedEnqueueRequestsFromMapFunc(func(_ context.Context, obj client.Object) []mcreconcile.Request {
+		return hubCopyToSpokeRequests(obj)
+	})
+}
+
+func hubCopyToSpokeRequests(obj client.Object) []mcreconcile.Request {
+	labels := obj.GetLabels()
+	if labels[LabelSourceCluster] == "" || labels[LabelSourceNamespace] == "" || labels[LabelSourceName] == "" {
+		return nil
+	}
+	return []mcreconcile.Request{{
+		ClusterName: clusterNameFromLabel(labels[LabelSourceCluster]),
+		Request: reconcile.Request{
+			NamespacedName: types.NamespacedName{Namespace: labels[LabelSourceNamespace], Name: labels[LabelSourceName]},
+		},
+	}}
 }
 
 // Reconcile handles a reconcile request from any engaged cluster.
