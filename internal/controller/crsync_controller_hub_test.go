@@ -21,8 +21,8 @@ func spokeClientWithStatus(objects ...client.Object) client.Client {
 func newHubCopy(namespace, derivedName string, status map[string]any, labels map[string]string) *unstructured.Unstructured {
 	obj := &unstructured.Unstructured{
 		Object: map[string]any{
-			"apiVersion": "example.com/v1",
-			"kind":       "TestResource",
+			"apiVersion": testGVK.GroupVersion().String(),
+			"kind":       testGVK.Kind,
 			"metadata": map[string]any{
 				"name":      derivedName,
 				"namespace": namespace,
