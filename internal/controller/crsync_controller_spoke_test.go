@@ -3,6 +3,7 @@ package controller
 import (
 	"context"
 	"fmt"
+	"strings"
 	"testing"
 
 	corev1 "k8s.io/api/core/v1"
@@ -10,6 +11,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime/schema"
+	"k8s.io/client-go/tools/events"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 	"sigs.k8s.io/controller-runtime/pkg/cluster"
@@ -97,7 +99,7 @@ func TestReconcile_create(t *testing.T) {
 
 	r := NewCRSyncFromSpokeReconciler(hc, &fakeClusterProvider{
 		clusters: map[string]cluster.Cluster{"spoke1": &fakeCluster{client: sc}},
-	}, testGVK)
+	}, testGVK, events.NewFakeRecorder(10))
 
 	// First reconcile: adds the finalizer and returns early.
 	if _, err := r.Reconcile(ctx, newRequest("spoke1", "default", "my-cm")); err != nil {
@@ -164,7 +166,7 @@ func TestReconcile_update(t *testing.T) {
 
 	r := NewCRSyncFromSpokeReconciler(hc, &fakeClusterProvider{
 		clusters: map[string]cluster.Cluster{"spoke1": &fakeCluster{client: sc}},
-	}, testGVK)
+	}, testGVK, events.NewFakeRecorder(10))
 
 	// First reconcile: adds the finalizer and returns early.
 	if _, err := r.Reconcile(ctx, newRequest("spoke1", "default", "my-cm")); err != nil {
@@ -205,7 +207,7 @@ func TestReconcile_namespaceCreatedOnDemand(t *testing.T) {
 
 	r := NewCRSyncFromSpokeReconciler(hc, &fakeClusterProvider{
 		clusters: map[string]cluster.Cluster{"spoke1": &fakeCluster{client: sc}},
-	}, testGVK)
+	}, testGVK, events.NewFakeRecorder(10))
 
 	// First reconcile: adds the finalizer and returns early.
 	if _, err := r.Reconcile(ctx, newRequest("spoke1", "default", "my-cm")); err != nil {
@@ -251,7 +253,7 @@ func TestReconcile_namespaceLabelDriftCorrected(t *testing.T) {
 
 	r := NewCRSyncFromSpokeReconciler(hc, &fakeClusterProvider{
 		clusters: map[string]cluster.Cluster{"spoke1": &fakeCluster{client: sc}},
-	}, testGVK)
+	}, testGVK, events.NewFakeRecorder(10))
 
 	// First reconcile: adds the finalizer and returns early.
 	if _, err := r.Reconcile(ctx, newRequest("spoke1", "default", "my-cm")); err != nil {
@@ -294,7 +296,7 @@ func TestReconcile_sourceDeleted(t *testing.T) {
 
 	r := NewCRSyncFromSpokeReconciler(hc, &fakeClusterProvider{
 		clusters: map[string]cluster.Cluster{"spoke1": &fakeCluster{client: sc}},
-	}, testGVK)
+	}, testGVK, events.NewFakeRecorder(10))
 
 	result, err := r.Reconcile(ctx, newRequest("spoke1", "default", "my-cm"))
 	if err != nil {
@@ -325,7 +327,7 @@ func TestReconcile_sourceDeletedNoHubCopy(t *testing.T) {
 
 	r := NewCRSyncFromSpokeReconciler(hc, &fakeClusterProvider{
 		clusters: map[string]cluster.Cluster{"spoke1": &fakeCluster{client: sc}},
-	}, testGVK)
+	}, testGVK, events.NewFakeRecorder(10))
 
 	result, err := r.Reconcile(context.Background(), newRequest("spoke1", "default", "my-cm"))
 	if err != nil {
@@ -344,7 +346,7 @@ func TestReconcile_clusterProfileNameEncoded(t *testing.T) {
 
 	r := NewCRSyncFromSpokeReconciler(hc, &fakeClusterProvider{
 		clusters: map[string]cluster.Cluster{"fleet/spoke1": &fakeCluster{client: sc}},
-	}, testGVK)
+	}, testGVK, events.NewFakeRecorder(10))
 
 	// First reconcile adds the finalizer, the second creates namespace and hub copy.
 	for i := range 2 {
@@ -386,7 +388,7 @@ func TestReconcile_hubNamespaceOfOtherClusterRejected(t *testing.T) {
 
 	r := NewCRSyncFromSpokeReconciler(hc, &fakeClusterProvider{
 		clusters: map[string]cluster.Cluster{"a/b-c": &fakeCluster{client: sc}},
-	}, testGVK)
+	}, testGVK, events.NewFakeRecorder(10))
 
 	// First reconcile only adds the finalizer.
 	_, err := r.Reconcile(ctx, newRequest("a/b-c", "default", "my-cm"))
@@ -416,7 +418,7 @@ func TestReconcile_hubOwnedSpecFieldSurvivesResync(t *testing.T) {
 
 	r := NewCRSyncFromSpokeReconciler(hc, &fakeClusterProvider{
 		clusters: map[string]cluster.Cluster{"spoke1": &fakeCluster{client: sc}},
-	}, testGVK)
+	}, testGVK, events.NewFakeRecorder(10))
 	reconcile := func() {
 		t.Helper()
 		_, err := r.Reconcile(ctx, newRequest("spoke1", "default", "my-cr"))
@@ -475,5 +477,70 @@ func TestReconcile_hubOwnedSpecFieldSurvivesResync(t *testing.T) {
 	_, found, _ := unstructured.NestedFieldNoCopy(got.Object, "spec", "tier")
 	if found {
 		t.Error("expected spec.tier removed on the hub after it was removed on the spoke")
+	}
+}
+
+func TestReconcile_fieldConflictRecordsEventAndSpokeWins(t *testing.T) {
+	sourceCR := newSpokeResource("default", "my-cr", map[string]any{"size": "small"}, nil)
+	sc := spokeClient(sourceCR)
+	hc := hubClientWith()
+	ctx := context.Background()
+	key := client.ObjectKey{Namespace: "spoke1--default", Name: "my-cr"}
+	recorder := events.NewFakeRecorder(10)
+
+	r := NewCRSyncFromSpokeReconciler(hc, &fakeClusterProvider{
+		clusters: map[string]cluster.Cluster{"spoke1": &fakeCluster{client: sc}},
+	}, testGVK, recorder)
+	reconcile := func() {
+		t.Helper()
+		_, err := r.Reconcile(ctx, newRequest("spoke1", "default", "my-cr"))
+		if err != nil {
+			t.Fatalf("unexpected reconcile error: %v", err)
+		}
+	}
+	reconcile() // adds the finalizer
+	reconcile() // creates the hub copy
+	reconcile() // resync without conflict
+	if len(recorder.Events) != 0 {
+		t.Fatalf("expected no events without a conflict, got %q", <-recorder.Events)
+	}
+
+	// A hub controller changes a field the spoke also sets.
+	hub := &unstructured.Unstructured{}
+	hub.SetGroupVersionKind(testGVK)
+	err := hc.Get(ctx, key, hub)
+	if err != nil {
+		t.Fatalf("get hub copy: %v", err)
+	}
+	err = unstructured.SetNestedField(hub.Object, "medium", "spec", "size")
+	if err != nil {
+		t.Fatalf("set spec.size: %v", err)
+	}
+	err = hc.Update(ctx, hub, client.FieldOwner("hub-normalizer"))
+	if err != nil {
+		t.Fatalf("update hub copy as hub controller: %v", err)
+	}
+
+	reconcile()
+
+	if len(recorder.Events) != 1 {
+		t.Fatalf("expected exactly one event for the conflict, got %d", len(recorder.Events))
+	}
+	event := <-recorder.Events
+	for _, want := range []string{"Warning", ReasonFieldConflict, ".spec.size", "hub-normalizer"} {
+		if !strings.Contains(event, want) {
+			t.Errorf("event %q does not mention %q", event, want)
+		}
+	}
+
+	got := &unstructured.Unstructured{}
+	got.SetGroupVersionKind(testGVK)
+	err = hc.Get(ctx, key, got)
+	if err != nil {
+		t.Fatalf("get hub copy after resync: %v", err)
+	}
+	size, _, _ := unstructured.NestedString(got.Object, "spec", "size")
+	if size != "small" {
+		t.Errorf("expected the spoke value spec.size = small to win, got %q", size)
 	}
 }

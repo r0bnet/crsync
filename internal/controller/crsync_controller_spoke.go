@@ -12,6 +12,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime/schema"
+	"k8s.io/client-go/tools/events"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
@@ -36,6 +37,8 @@ const (
 	FinalizerHubCopyCleanup = "crsync.r0bnet.github.io/hub-copy-cleanup"
 	// FieldManager is the server-side apply field manager crsync writes hub copies with.
 	FieldManager = "crsync"
+	// ReasonFieldConflict is the Event reason when a hub controller changed a field the spoke also sets.
+	ReasonFieldConflict = "FieldConflict"
 )
 
 // errHubCopyPending is returned by reconcileDeletion when the hub copy still exists
@@ -47,11 +50,13 @@ type crsyncFromSpokeReconciler struct {
 	hubClient client.Client
 	clusters  ClusterProvider
 	gvk       schema.GroupVersionKind
+	recorder  events.EventRecorder
 }
 
 // NewCRSyncFromSpokeReconciler returns a crsyncFromSpokeReconciler for the given GVK.
-func NewCRSyncFromSpokeReconciler(hubClient client.Client, clusters ClusterProvider, gvk schema.GroupVersionKind) *crsyncFromSpokeReconciler {
-	return &crsyncFromSpokeReconciler{hubClient: hubClient, clusters: clusters, gvk: gvk}
+// The recorder emits Events on hub copies, e.g. for field conflicts.
+func NewCRSyncFromSpokeReconciler(hubClient client.Client, clusters ClusterProvider, gvk schema.GroupVersionKind, recorder events.EventRecorder) *crsyncFromSpokeReconciler {
+	return &crsyncFromSpokeReconciler{hubClient: hubClient, clusters: clusters, gvk: gvk, recorder: recorder}
 }
 
 // SetupWithManager registers the spoke reconciler with the multicluster manager.
@@ -164,10 +169,18 @@ func (r *crsyncFromSpokeReconciler) reconcileDeletion(ctx context.Context, spoke
 
 // upsertHubCopy server-side applies the hub copy of the given spoke resource.
 // Fields only hub controllers set (e.g. Crossplane's spec.crossplane.compositionRef)
-// are left alone; forcing lets the spoke win fields both sides set.
+// are left alone. If a hub controller changed a field the spoke also sets, a
+// Warning Event names it and the spoke wins via a forced apply.
 func (r *crsyncFromSpokeReconciler) upsertHubCopy(ctx context.Context, sourceObj *unstructured.Unstructured, clusterName, hubNS, name string) error {
 	target := buildTarget(sourceObj, r.gvk, clusterName, hubNS, name)
-	err := r.hubClient.Apply(ctx, client.ApplyConfigurationFromUnstructured(target), client.FieldOwner(FieldManager), client.ForceOwnership)
+	applyConfig := client.ApplyConfigurationFromUnstructured(target)
+	err := r.hubClient.Apply(ctx, applyConfig, client.FieldOwner(FieldManager))
+	if apierrors.IsConflict(err) {
+		// The conflict message names the fields and the managers that changed them.
+		r.recorder.Eventf(target, nil, corev1.EventTypeWarning, ReasonFieldConflict, "Apply",
+			"spoke value overrides a hub-side change: %v", err)
+		err = r.hubClient.Apply(ctx, applyConfig, client.FieldOwner(FieldManager), client.ForceOwnership)
+	}
 	if err != nil {
 		return fmt.Errorf("apply hub resource: %w", err)
 	}

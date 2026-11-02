@@ -96,7 +96,7 @@ rules:
   - secrets/finalizers
   verbs:
   - update
-{{/* Event controller: watches events.k8s.io/v1 Events on the hub */}}
+{{/* Event controller watches events.k8s.io/v1 Events on the hub; the spoke reconciler records FieldConflict events */}}
 - apiGroups:
   - events.k8s.io
   resources:
@@ -105,6 +105,8 @@ rules:
   - get
   - list
   - watch
+  - create
+  - patch
 {{/* Core events: for recording controller events */}}
 - apiGroups:
   - ""

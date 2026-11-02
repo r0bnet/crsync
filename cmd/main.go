@@ -196,7 +196,7 @@ func main() {
 		}
 		setupLog.Info("registered controller", "gvk", gvk.String(), "type", "hub")
 
-		fromSpokeReconciler := crsynccontroller.NewCRSyncFromSpokeReconciler(mgr.GetLocalManager().GetClient(), mgr, gvk)
+		fromSpokeReconciler := crsynccontroller.NewCRSyncFromSpokeReconciler(mgr.GetLocalManager().GetClient(), mgr, gvk, mgr.GetLocalManager().GetEventRecorder("crsync"))
 		if err := fromSpokeReconciler.SetupWithManager(mgr, spokeMaxConcurrentReconciles); err != nil {
 			setupLog.Error(err, "unable to create controller", "gvk", gvk.String())
 			os.Exit(1)
