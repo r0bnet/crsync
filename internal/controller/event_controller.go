@@ -23,8 +23,6 @@ import (
 )
 
 const (
-	// maxOwnerHops bounds the ownerReference walk from an Event to its hub copy.
-	maxOwnerHops = 5
 	// maxEventNoteLength is the events.k8s.io/v1 limit for Event.note.
 	maxEventNoteLength = 1024
 )
@@ -79,7 +77,8 @@ func (r *eventReconciler) Reconcile(ctx context.Context, req mcreconcile.Request
 		return ctrl.Result{}, nil
 	}
 
-	hubCopy, hops := r.findHubCopy(ctx, ev)
+	regarding := schema.FromAPIVersionAndKind(ev.Regarding.APIVersion, ev.Regarding.Kind)
+	hubCopy, hops := findHubCopy(ctx, r.ownerReader, ev.Namespace, regarding, ev.Regarding.Name)
 	if hubCopy == nil {
 		return ctrl.Result{}, nil
 	}
@@ -107,41 +106,6 @@ func (r *eventReconciler) Reconcile(ctx context.Context, req mcreconcile.Request
 	}
 	logger.V(1).Info("replayed event to spoke", "source", client.ObjectKeyFromObject(source))
 	return ctrl.Result{}, nil
-}
-
-// findHubCopy walks controller ownerReferences from the Event's regarding object
-// until it finds an object carrying crsync's source labels. It returns nil when
-// an object can't be read, has no controller, or the walk exceeds maxOwnerHops.
-func (r *eventReconciler) findHubCopy(ctx context.Context, ev *eventsv1.Event) (*unstructured.Unstructured, int) {
-	logger := log.FromContext(ctx)
-	gvk := schema.FromAPIVersionAndKind(ev.Regarding.APIVersion, ev.Regarding.Kind)
-	name := ev.Regarding.Name
-
-	for hops := 0; hops <= maxOwnerHops; hops++ {
-		obj := &unstructured.Unstructured{}
-		obj.SetGroupVersionKind(gvk)
-		// ownerReferences are namespace-local, so the whole chain lives in the Event's namespace.
-		err := r.ownerReader.Get(ctx, client.ObjectKey{Namespace: ev.Namespace, Name: name}, obj)
-		if err != nil {
-			logger.V(1).Info("skipping event: owner chain not readable", "gvk", gvk.String(), "name", name, "error", err.Error())
-			return nil, 0
-		}
-
-		labels := obj.GetLabels()
-		if labels[LabelSourceCluster] != "" && labels[LabelSourceNamespace] != "" && labels[LabelSourceName] != "" {
-			return obj, hops
-		}
-
-		owner := metav1.GetControllerOfNoCopy(obj)
-		if owner == nil {
-			logger.V(1).Info("skipping event: no controller owner", "gvk", gvk.String(), "name", name)
-			return nil, 0
-		}
-		gvk = schema.FromAPIVersionAndKind(owner.APIVersion, owner.Kind)
-		name = owner.Name
-	}
-	logger.V(1).Info("skipping event: owner chain too long", "maxOwnerHops", maxOwnerHops)
-	return nil, 0
 }
 
 // replayedEvent builds the spoke Event for a hub Event. Its name derives from the
