@@ -8,7 +8,6 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	eventsv1 "k8s.io/api/events/v1"
 	"k8s.io/apimachinery/pkg/runtime"
-	"k8s.io/apimachinery/pkg/runtime/schema"
 	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
 	"k8s.io/client-go/discovery"
 	_ "k8s.io/client-go/plugin/pkg/client/auth"
@@ -52,6 +51,7 @@ func main() {
 	var kindClustersPrefix string
 	var hubMaxConcurrentReconciles int
 	var spokeMaxConcurrentReconciles int
+	var replayEvents bool
 
 	flag.StringVar(&configFile, "config", os.Getenv("CONFIG_FILE"), "Configuration file")
 	flag.StringVar(&metricsAddr, "metrics-bind-address", "0", "The address the metric endpoint binds to. "+
@@ -71,6 +71,9 @@ func main() {
 		"Maximum number of concurrent reconciles for hub-side controllers (resource sync and secrets).")
 	flag.IntVar(&spokeMaxConcurrentReconciles, "spoke-max-concurrent-reconciles", 1,
 		"Maximum number of concurrent reconciles for spoke-side controllers.")
+	flag.BoolVar(&replayEvents, "replay-events", false,
+		"Replay hub Events onto the source objects in spoke clusters, following ownerReferences "+
+			"from composed resources. Requires get access to the owners' resource types.")
 
 	opts := zap.Options{Development: true}
 	opts.BindFlags(flag.CommandLine)
@@ -204,20 +207,19 @@ func main() {
 		setupLog.Info("registered controller", "gvk", gvk.String(), "type", "spoke")
 	}
 
-	// Build a set of watched GVKs for the event filter.
-	watchedGVKs := make(map[schema.GroupVersionKind]struct{}, len(resolvedGVKs))
-	for _, gvk := range resolvedGVKs {
-		watchedGVKs[gvk] = struct{}{}
+	// Replaying hub Events walks ownerReferences, which needs read access to the owners.
+	if replayEvents {
+		eventReconciler := crsynccontroller.NewEventReconciler(
+			mgr.GetLocalManager().GetClient(),
+			mgr.GetLocalManager().GetAPIReader(),
+			mgr,
+		)
+		if err := eventReconciler.SetupWithManager(mgr); err != nil {
+			setupLog.Error(err, "unable to create event controller")
+			os.Exit(1)
+		}
+		setupLog.Info("registered event replay controller")
 	}
-
-	// Register a single event controller that watches events.k8s.io/v1 Events
-	// and filters to only those whose Regarding object matches a configured GVK.
-	eventReconciler := crsynccontroller.NewEventReconciler(watchedGVKs)
-	if err := eventReconciler.SetupWithManager(mgr); err != nil {
-		setupLog.Error(err, "unable to create event controller")
-		os.Exit(1)
-	}
-	setupLog.Info("registered event controller")
 
 	// Build allowed secret types from config.
 	allowedSecretTypes := make([]corev1.SecretType, len(ctrlConfig.SecretTypes))

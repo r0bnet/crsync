@@ -125,6 +125,28 @@ rules:
   - list
   - watch
 {{/* Access plugin reads kubeconfig secrets (covered by the secrets rule above) */}}
+{{/* Event replay walks ownerReferences; synced GVKs are readable via the rules below */}}
+{{- if .Values.eventReplay.enabled }}
+{{- if .Values.eventReplay.ownerResources }}
+{{- range .Values.eventReplay.ownerResources }}
+- apiGroups:
+  - {{ .group | quote }}
+  resources:
+  {{- range .resources }}
+  - {{ . | quote }}
+  {{- end }}
+  verbs:
+  - get
+{{- end }}
+{{- else }}
+- apiGroups:
+  - "*"
+  resources:
+  - "*"
+  verbs:
+  - get
+{{- end }}
+{{- end }}
 {{/* --- Dynamic rules from configured GVKs --- */}}
 {{- range .Values.config.resources }}
 - apiGroups:

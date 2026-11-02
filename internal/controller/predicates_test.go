@@ -7,7 +7,6 @@ import (
 	eventsv1 "k8s.io/api/events/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
-	"k8s.io/apimachinery/pkg/runtime/schema"
 	"sigs.k8s.io/controller-runtime/pkg/event"
 )
 
@@ -271,86 +270,55 @@ func TestOnlyStatusChange_deletePassesThrough(t *testing.T) {
 	}
 }
 
-func newEvent(apiVersion, kind string) *eventsv1.Event {
-	return &eventsv1.Event{
-		Regarding: corev1.ObjectReference{
-			APIVersion: apiVersion,
-			Kind:       kind,
-		},
+func newEvent(reportingController string) *eventsv1.Event {
+	return &eventsv1.Event{ReportingController: reportingController}
+}
+
+func TestEventPredicate_createOtherController(t *testing.T) {
+	p := EventPredicate(FieldManager)
+	if !p.Create(event.CreateEvent{Object: newEvent("managed/object.kubernetes.m.crossplane.io")}) {
+		t.Error("expected events of other controllers to pass through on create")
 	}
 }
 
-func TestEventPredicate_createMatchingGVK(t *testing.T) {
-	watched := map[schema.GroupVersionKind]struct{}{
-		{Group: "apps", Version: "v1", Kind: "Deployment"}: {},
-	}
-	ev := newEvent("apps/v1", "Deployment")
-
-	p := EventPredicate(watched)
-	if !p.Create(event.CreateEvent{Object: ev}) {
-		t.Error("expected matching event to pass through on create")
+func TestEventPredicate_createOwnEventFiltered(t *testing.T) {
+	p := EventPredicate(FieldManager)
+	if p.Create(event.CreateEvent{Object: newEvent(FieldManager)}) {
+		t.Error("expected crsync's own events to be filtered out on create")
 	}
 }
 
-func TestEventPredicate_createNonMatchingGVK(t *testing.T) {
-	watched := map[schema.GroupVersionKind]struct{}{
-		{Group: "apps", Version: "v1", Kind: "Deployment"}: {},
-	}
-	ev := newEvent("v1", "ConfigMap")
-
-	p := EventPredicate(watched)
-	if p.Create(event.CreateEvent{Object: ev}) {
-		t.Error("expected non-matching event to be filtered out on create")
+func TestEventPredicate_updateOwnEventFiltered(t *testing.T) {
+	ev := newEvent(FieldManager)
+	p := EventPredicate(FieldManager)
+	if p.Update(event.UpdateEvent{ObjectOld: ev, ObjectNew: ev}) {
+		t.Error("expected crsync's own events to be filtered out on update")
 	}
 }
 
-func TestEventPredicate_updateMatchingGVK(t *testing.T) {
-	watched := map[schema.GroupVersionKind]struct{}{
-		{Group: "apps", Version: "v1", Kind: "Deployment"}: {},
-	}
-	ev := newEvent("apps/v1", "Deployment")
-
-	p := EventPredicate(watched)
+func TestEventPredicate_updateOtherController(t *testing.T) {
+	ev := newEvent("other")
+	p := EventPredicate(FieldManager)
 	if !p.Update(event.UpdateEvent{ObjectOld: ev, ObjectNew: ev}) {
-		t.Error("expected matching event to pass through on update")
+		t.Error("expected events of other controllers to pass through on update")
 	}
 }
 
 func TestEventPredicate_deleteAlwaysFiltered(t *testing.T) {
-	watched := map[schema.GroupVersionKind]struct{}{
-		{Group: "apps", Version: "v1", Kind: "Deployment"}: {},
-	}
-	ev := newEvent("apps/v1", "Deployment")
-
-	p := EventPredicate(watched)
-	if p.Delete(event.DeleteEvent{Object: ev}) {
+	p := EventPredicate(FieldManager)
+	if p.Delete(event.DeleteEvent{Object: newEvent("other")}) {
 		t.Error("expected delete events to always be filtered out")
 	}
 }
 
-func TestEventPredicate_genericMatchingGVK(t *testing.T) {
-	watched := map[schema.GroupVersionKind]struct{}{
-		{Group: "apps", Version: "v1", Kind: "Deployment"}: {},
-	}
-	ev := newEvent("apps/v1", "Deployment")
-
-	p := EventPredicate(watched)
-	if !p.Generic(event.GenericEvent{Object: ev}) {
-		t.Error("expected matching event to pass through on generic")
-	}
-}
-
 func TestEventPredicate_nonEventObject(t *testing.T) {
-	watched := map[schema.GroupVersionKind]struct{}{
-		{Group: "apps", Version: "v1", Kind: "Deployment"}: {},
-	}
 	obj := unstructuredObj(map[string]any{
 		"apiVersion": "v1",
 		"kind":       "ConfigMap",
 		"metadata":   map[string]any{"name": "a"},
 	})
 
-	p := EventPredicate(watched)
+	p := EventPredicate(FieldManager)
 	if p.Create(event.CreateEvent{Object: obj}) {
 		t.Error("expected non-Event object to be filtered out")
 	}

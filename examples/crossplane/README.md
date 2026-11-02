@@ -18,6 +18,18 @@ The label key is a contract between crsync and your compositions. `internal/cont
 
 crsync writes hub copies with server-side apply (field manager `crsync`) and only sends what it got from the workload cluster. Crossplane's `spec.crossplane.compositionRef` and similar fields stay owned by Crossplane and survive every resync.
 
+## Events on the workload cluster
+
+With `eventReplay.enabled=true`, crsync copies hub Events onto the user's `XDatabase` on the workload cluster. That includes Events on composed resources: crsync walks `ownerReferences` from the composed `Object` up to the hub copy. Users see them in `kubectl describe xdatabase orders`. Copied notes name only the composed resource's kind (`Object: ...`), never its hub name. crsync's own Events (for example `FieldConflict`) aren't copied, and Events whose owner chain can't be read are skipped.
+
+The walk needs `get` on every type in the chain. By default the chart grants `get` on `*/*`. Scope it with:
+
+```bash
+helm upgrade crsync charts/crsync --reuse-values \
+  --set eventReplay.enabled=true \
+  --set-json 'eventReplay.ownerResources=[{"group":"kubernetes.m.crossplane.io","resources":["objects"]}]'
+```
+
 ## Run it
 
 ```bash

@@ -35,6 +35,9 @@ spec:
         - --clusterprofile-provider-file=/etc/crsync/clusterprofile-provider.json
         - --hub-max-concurrent-reconciles={{ .Values.concurrency.hub }}
         - --spoke-max-concurrent-reconciles={{ .Values.concurrency.spoke }}
+        {{- if .Values.eventReplay.enabled }}
+        - --replay-events
+        {{- end }}
         securityContext:
           {{- toYaml .Values.containerSecurityContext | nindent 10 }}
         resources:

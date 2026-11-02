@@ -7,7 +7,6 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	eventsv1 "k8s.io/api/events/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
-	"k8s.io/apimachinery/pkg/runtime/schema"
 	"sigs.k8s.io/controller-runtime/pkg/event"
 	"sigs.k8s.io/controller-runtime/pkg/predicate"
 )
@@ -48,17 +47,11 @@ func OnlyStatusChange() predicate.Predicate {
 	}
 }
 
-// EventPredicate returns a predicate that filters events.k8s.io/v1 Events
-// to only those whose Regarding object matches one of the watched GVKs.
-func EventPredicate(watchedGVKs map[schema.GroupVersionKind]struct{}) predicate.Predicate {
+// EventPredicate returns a predicate that passes events.k8s.io/v1 Events on
+// create and update, except those reported by ignoredController (crsync's own).
+func EventPredicate(ignoredController string) predicate.Predicate {
 	match := func(obj *eventsv1.Event) bool {
-		if obj == nil {
-			return false
-		}
-		ref := obj.Regarding
-		gvk := schema.FromAPIVersionAndKind(ref.APIVersion, ref.Kind)
-		_, ok := watchedGVKs[gvk]
-		return ok
+		return obj != nil && obj.ReportingController != ignoredController
 	}
 
 	return predicate.Funcs{

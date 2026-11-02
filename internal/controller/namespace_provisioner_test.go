@@ -6,6 +6,7 @@ import (
 	"time"
 
 	corev1 "k8s.io/api/core/v1"
+	eventsv1 "k8s.io/api/events/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -16,6 +17,7 @@ var testScheme = runtime.NewScheme()
 
 func init() {
 	_ = corev1.AddToScheme(testScheme)
+	_ = eventsv1.AddToScheme(testScheme)
 }
 
 func newFakeClient() client.Client {

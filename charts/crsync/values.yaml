@@ -22,6 +22,15 @@ clusterProfile:
     image: registry.k8s.io/cluster-inventory-api/kubeconfig-secretreader:v0.1.3
     pullPolicy: IfNotPresent
 
+eventReplay:
+  # enabled: replay hub Events onto the source objects in workload clusters, following
+  # ownerReferences from composed resources. Off by default: walking owners needs read access.
+  enabled: false
+  # ownerResources: types crsync may read while walking. Empty grants get on all resources (*/*).
+  ownerResources: []
+  #  - group: "kubernetes.m.crossplane.io"
+  #    resources: ["objects"]
+
 concurrency:
   # hub: max concurrent reconciles for hub-side controllers (resource sync from hub and secret sync from hub to spokes).
   hub: 1
