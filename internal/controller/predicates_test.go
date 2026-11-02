@@ -3,9 +3,7 @@ package controller
 import (
 	"testing"
 
-	corev1 "k8s.io/api/core/v1"
 	eventsv1 "k8s.io/api/events/v1"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"sigs.k8s.io/controller-runtime/pkg/event"
 )
@@ -321,69 +319,5 @@ func TestEventPredicate_nonEventObject(t *testing.T) {
 	p := EventPredicate(FieldManager)
 	if p.Create(event.CreateEvent{Object: obj}) {
 		t.Error("expected non-Event object to be filtered out")
-	}
-}
-
-func secretWithAnnotations(annotations map[string]string) *corev1.Secret {
-	return &corev1.Secret{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:        "test-secret",
-			Annotations: annotations,
-		},
-		Type: corev1.SecretTypeOpaque,
-	}
-}
-
-func TestRequireAnnotation_withAnnotation(t *testing.T) {
-	p := RequireAnnotation("example.com/required")
-	s := secretWithAnnotations(map[string]string{
-		"example.com/required": "some-value",
-	})
-
-	if !p.Create(event.CreateEvent{Object: s}) {
-		t.Error("expected object with annotation to pass on create")
-	}
-	if !p.Update(event.UpdateEvent{ObjectOld: s, ObjectNew: s}) {
-		t.Error("expected object with annotation to pass on update")
-	}
-	if !p.Delete(event.DeleteEvent{Object: s}) {
-		t.Error("expected object with annotation to pass on delete")
-	}
-}
-
-func TestRequireAnnotation_missingAnnotation(t *testing.T) {
-	p := RequireAnnotation("example.com/required")
-	s := secretWithAnnotations(nil)
-
-	if p.Create(event.CreateEvent{Object: s}) {
-		t.Error("expected object without annotation to be filtered on create")
-	}
-	if p.Update(event.UpdateEvent{ObjectOld: s, ObjectNew: s}) {
-		t.Error("expected object without annotation to be filtered on update")
-	}
-	if p.Delete(event.DeleteEvent{Object: s}) {
-		t.Error("expected object without annotation to be filtered on delete")
-	}
-}
-
-func TestRequireAnnotation_emptyAnnotationValue(t *testing.T) {
-	p := RequireAnnotation("example.com/required")
-	s := secretWithAnnotations(map[string]string{
-		"example.com/required": "",
-	})
-
-	if p.Create(event.CreateEvent{Object: s}) {
-		t.Error("expected object with empty annotation value to be filtered")
-	}
-}
-
-func TestRequireAnnotation_unrelatedAnnotation(t *testing.T) {
-	p := RequireAnnotation("example.com/required")
-	s := secretWithAnnotations(map[string]string{
-		"example.com/other": "value",
-	})
-
-	if p.Create(event.CreateEvent{Object: s}) {
-		t.Error("expected object with unrelated annotation to be filtered")
 	}
 }

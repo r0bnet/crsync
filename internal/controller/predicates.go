@@ -94,27 +94,3 @@ func withoutStatusAndResourceVersion(obj *unstructured.Unstructured) map[string]
 
 	return out
 }
-
-// RequireAnnotation returns a predicate that only accepts objects carrying the
-// given annotation key with a non-empty value.
-func RequireAnnotation(key string) predicate.Predicate {
-	hasAnnotation := func(annotations map[string]string) bool {
-		v, ok := annotations[key]
-		return ok && v != ""
-	}
-
-	return predicate.Funcs{
-		CreateFunc: func(e event.CreateEvent) bool {
-			return hasAnnotation(e.Object.GetAnnotations())
-		},
-		UpdateFunc: func(e event.UpdateEvent) bool {
-			return hasAnnotation(e.ObjectNew.GetAnnotations())
-		},
-		DeleteFunc: func(e event.DeleteEvent) bool {
-			return hasAnnotation(e.Object.GetAnnotations())
-		},
-		GenericFunc: func(e event.GenericEvent) bool {
-			return hasAnnotation(e.Object.GetAnnotations())
-		},
-	}
-}
