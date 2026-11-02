@@ -4,7 +4,6 @@ import (
 	"maps"
 	"reflect"
 
-	corev1 "k8s.io/api/core/v1"
 	eventsv1 "k8s.io/api/events/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"sigs.k8s.io/controller-runtime/pkg/event"
@@ -94,44 +93,6 @@ func withoutStatusAndResourceVersion(obj *unstructured.Unstructured) map[string]
 	}
 
 	return out
-}
-
-// SecretTypePredicate returns a predicate that filters Secrets by their type.
-// When allowedTypes is empty, all Secrets pass through. When non-empty, only
-// Secrets whose Type matches one of the listed values are accepted.
-func SecretTypePredicate(allowedTypes []corev1.SecretType) predicate.Predicate {
-	if len(allowedTypes) == 0 {
-		return predicate.Funcs{} // allow everything
-	}
-
-	allowed := make(map[corev1.SecretType]struct{}, len(allowedTypes))
-	for _, t := range allowedTypes {
-		allowed[t] = struct{}{}
-	}
-
-	match := func(obj *corev1.Secret) bool {
-		_, ok := allowed[obj.Type]
-		return ok
-	}
-
-	return predicate.Funcs{
-		CreateFunc: func(e event.CreateEvent) bool {
-			s, ok := e.Object.(*corev1.Secret)
-			return ok && match(s)
-		},
-		UpdateFunc: func(e event.UpdateEvent) bool {
-			s, ok := e.ObjectNew.(*corev1.Secret)
-			return ok && match(s)
-		},
-		DeleteFunc: func(e event.DeleteEvent) bool {
-			s, ok := e.Object.(*corev1.Secret)
-			return ok && match(s)
-		},
-		GenericFunc: func(e event.GenericEvent) bool {
-			s, ok := e.Object.(*corev1.Secret)
-			return ok && match(s)
-		},
-	}
 }
 
 // RequireAnnotation returns a predicate that only accepts objects carrying the

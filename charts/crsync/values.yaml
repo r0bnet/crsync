@@ -26,13 +26,15 @@ eventReplay:
   # enabled: replay hub Events onto the source objects in workload clusters, following
   # ownerReferences from composed resources. Off by default: walking owners needs read access.
   enabled: false
-  # ownerResources: types crsync may read while walking. Empty grants get on all resources (*/*).
-  ownerResources: []
-  #  - group: "kubernetes.m.crossplane.io"
-  #    resources: ["objects"]
+
+# ownerResources: types crsync may read while walking ownerReferences (event replay and write-back).
+# Empty grants get on all resources (*/*). Only used when either feature is on.
+ownerResources: []
+#  - group: "kubernetes.m.crossplane.io"
+#    resources: ["objects"]
 
 concurrency:
-  # hub: max concurrent reconciles for hub-side controllers (resource sync from hub and secret sync from hub to spokes).
+  # hub: max concurrent reconciles for hub-side controllers (status sync and write-back from hub to spokes).
   hub: 1
   # spoke: max concurrent reconciles for spoke-side controllers (resource sync from spoke clusters to hub).
   spoke: 1
@@ -64,10 +66,14 @@ config:
   #    version: "v1alpha1"
   #    kind: "CRSyncTest"
   #    resource: "crsynctests"
-  # secretTypes: optional list of Secret types the secret controller should reconcile
-  # (e.g. "Opaque", "kubernetes.io/tls"). When empty, all Secret types are synced from hub to spokes.
-  secretTypes: []
-  #  - "connection.crossplane.io/v1alpha1"
+  # writeBack: hub GVKs copied back to the workload cluster when they belong to a hub copy,
+  # by controller ownerReferences or the crsync.r0bnet.github.io/write-back: "true" annotation.
+  # Same format as resources. Empty disables write-back.
+  writeBack: []
+  #  - group: ""
+  #    version: "v1"
+  #    kind: "Secret"
+  #    resource: "secrets"
 
 serviceAccount:
   name: crsync-controller-manager

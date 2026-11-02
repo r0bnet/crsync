@@ -97,12 +97,13 @@ for ctx in $(kubectl config get-contexts -o name | grep -E "^kind-${SPOKE_PREFIX
 	kubectl --context "${ctx}" wait --for=condition=Established "crd/${XR_CRD}" --timeout=60s
 done
 
-echo "=== Adding XDatabase to crsync's synced resources"
+echo "=== Adding XDatabase to crsync's synced resources and writing back connection Secrets"
 helm upgrade crsync "$(git -C "${EXAMPLE_DIR}" rev-parse --show-toplevel)/charts/crsync" \
 	--kube-context "${HUB_CONTEXT}" \
 	--namespace "${RELEASE_NAMESPACE}" \
 	--reuse-values \
 	--set-json 'config.resources=[{"group":"crsync.test.io","kind":"CRSyncTest","resource":"crsynctests"},{"group":"demo.crsync.io","kind":"XDatabase","resource":"xdatabases"}]' \
+	--set-json 'config.writeBack=[{"group":"","version":"v1","kind":"Secret","resource":"secrets"}]' \
 	--wait --timeout 120s
 
 echo ""

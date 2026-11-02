@@ -25,3 +25,17 @@ func TestExamplesReferenceSourceClusterLabel(t *testing.T) {
 		}
 	}
 }
+
+// GUARD: fails when AnnotationWriteBack changes but the docs still tell users the old key.
+func TestDocsReferenceWriteBackAnnotation(t *testing.T) {
+	for _, path := range []string{"../../README.md", "../../examples/crossplane/README.md"} {
+		content, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatalf("read %s: %v", path, err)
+		}
+		if !strings.Contains(string(content), AnnotationWriteBack) {
+			t.Errorf("%s does not reference %q: the write-back annotation key changed, so update the docs "+
+				"and tell users their compositions and policies must set the new key", path, AnnotationWriteBack)
+		}
+	}
+}

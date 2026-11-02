@@ -7,6 +7,9 @@ resources:
     version: "v1"
     kind: "Secret"
 
-# Optional list of Secret types the secret controller should reconcile (e.g. "Opaque", "kubernetes.io/tls"). When empty, all Secret types are reconciled.
-secretTypes:
-  - "Opaque"
+# Optional: hub GVKs copied back to the workload cluster when they belong to a hub copy.
+# A GVK can't be in resources and writeBack at once.
+# writeBack:
+#   - group: ""
+#     version: "v1"
+#     kind: "Secret"

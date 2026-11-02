@@ -10,7 +10,7 @@ crsync runs only on the hub; nothing extra is installed on the spokes. It is bui
 spoke (fleet/spoke1)                      hub
 default/orders  ── spec, labels ──▶  fleet-spoke1--default/orders ──▶ hub controller (e.g. Crossplane)
                 ◀── status ─────────
-                ◀── Secrets in the hub namespace
+                ◀── objects owned by the hub copy (write-back, opt-in)
                 ◀── Events (opt-in)
 ```
 
@@ -20,7 +20,7 @@ default/orders  ── spec, labels ──▶  fleet-spoke1--default/orders ─�
 - **Spec (spoke → hub):** crsync writes hub copies with server-side apply (field manager `crsync`) and only sends what it got from the spoke: `spec`, labels, annotations. Fields that only hub controllers set (e.g. Crossplane's `spec.crossplane.compositionRef`) survive every resync. If a hub controller changed a field the spoke also sets, crsync records a `FieldConflict` Warning Event on the hub copy and the spoke's value wins.
 - **Status (hub → spoke):** status changes on the hub copy are copied to the spoke object.
 - **Deletion:** a finalizer on the spoke object keeps it until the hub copy is gone, including any finalizers hub controllers put on it.
-- **Secrets (hub → spoke):** Secrets in crsync's hub namespaces (e.g. connection details) are copied into the spoke namespace, optionally filtered by type.
+- **Write-back (hub → spoke, opt-in):** see [Write-back](#write-back).
 - **Events (hub → spoke, opt-in):** see [Event replay](#event-replay).
 
 Anything crsync shouldn't know about, such as cluster-specific changes to hub copies, belongs on the hub. [examples/mutating-admission-policy](examples/mutating-admission-policy) shows a `MutatingAdmissionPolicy` for that.
@@ -45,8 +45,10 @@ Then try the Crossplane example: [examples/crossplane](examples/crossplane). Cle
 resources:            # GVKs to sync; without a version, all versions served by the hub are used
   - group: demo.crsync.io
     kind: XDatabase
-secretTypes:          # optional; Secret types copied from hub to spoke (empty = all)
-  - Opaque
+writeBack:            # optional; GVKs copied back to the spoke, see Write-back
+  - group: ""
+    version: v1
+    kind: Secret
 ```
 
 The hub and every spoke need the CRDs of these resources. Spokes need only the CRDs, not the controllers behind them.
@@ -67,12 +69,12 @@ The hub and every spoke need the CRDs of these resources. Spokes need only the C
 | Value | Default | Purpose |
 |-------|---------|---------|
 | `config.resources` | `[]` | Synced GVKs. Each entry also needs `resource` (plural), used for RBAC |
-| `config.secretTypes` | `[]` | See above |
+| `config.writeBack` | `[]` | [Write-back](#write-back) GVKs. Each entry also needs `resource` (plural), used for RBAC |
 | `clusterProfile.accessProvider.image` | `kubeconfig-secretreader:v0.1.3` | Exec plugin mounted as an image volume (needs Kubernetes image volumes) |
 | `eventReplay.enabled` | `false` | Event replay plus its RBAC |
-| `eventReplay.ownerResources` | `[]` | Types readable during the owner walk; empty means `get` on `*/*` |
+| `ownerResources` | `[]` | Types readable during the owner walk (event replay, write-back); empty means `get` on `*/*` |
 
-crsync talks to spokes with the credentials from their kubeconfig Secrets. Those need read/write access to the synced resources and Secrets, and `create`/`patch` on `events.k8s.io` Events if event replay is on.
+crsync talks to spokes with the credentials from their kubeconfig Secrets. Those need read/write access to the synced resources and the write-back GVKs, and `create`/`patch` on `events.k8s.io` Events if event replay or write-back is on.
 
 ## Event replay
 
@@ -84,7 +86,23 @@ With `--replay-events`, Events on the hub are copied onto the spoke object, so u
 - crsync's own Events (e.g. `FieldConflict`) are not copied.
 - Updates to an Event (count, last seen) update the same spoke Event.
 
-It's off by default because the owner walk needs `get` on every type in the chain. That's `*/*` unless you list them in `eventReplay.ownerResources`. When enabled, crsync also watches all Events on the hub.
+It's off by default because the owner walk needs `get` on every type in the chain. That's `*/*` unless you list them in `ownerResources`. When enabled, crsync also watches all Events on the hub.
+
+## Write-back
+
+Hub controllers often create objects users need, such as a connection Secret. With `writeBack` set, crsync copies hub objects of those GVKs into the source namespace on the spoke. An object is copied if either:
+
+1. its `controller` ownerReferences lead to a hub copy (same walk as [event replay](#event-replay)), or
+2. it has the annotation `crsync.r0bnet.github.io/write-back: "true"`, for objects without owners. Set it in the composition, or with a `MutatingAdmissionPolicy` for objects a controller writes.
+
+The copy keeps the name and everything except `metadata` and `status` (a Secret keeps its `type` and `data`). Hub labels and annotations aren't copied.
+
+- Copies carry `crsync.r0bnet.github.io/write-back-copy: "true"`. crsync never overwrites or deletes an object without it, and records a `WriteBackConflict` Warning instead.
+- Owned objects get an ownerReference to the spoke source, so deleting the source deletes the copy. Annotated objects have no known source: their Warnings go on the hub object, and their copy is removed only with the hub object.
+- Deleting the hub object deletes the copy. crsync also watches its copies on the spoke, so edited or deleted copies are repaired, and copies whose hub object disappeared while crsync was down are removed at startup.
+- If the spoke doesn't serve the GVK, crsync records a `WriteBackTypeMissing` Warning and retries every 5 minutes.
+- On spokes, crsync caches only its own copies of the write-back GVKs, not every Secret.
+- A GVK can't be in `resources` and `writeBack` at once.
 
 ## Development
 

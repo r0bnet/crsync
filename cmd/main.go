@@ -5,10 +5,14 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"slices"
 
 	corev1 "k8s.io/api/core/v1"
 	eventsv1 "k8s.io/api/events/v1"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/runtime/schema"
 	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
 	"k8s.io/client-go/discovery"
 	_ "k8s.io/client-go/plugin/pkg/client/auth"
@@ -17,6 +21,9 @@ import (
 	clusterinventoryv1alpha1 "sigs.k8s.io/cluster-inventory-api/apis/v1alpha1"
 	"sigs.k8s.io/cluster-inventory-api/pkg/access"
 	ctrl "sigs.k8s.io/controller-runtime"
+	"sigs.k8s.io/controller-runtime/pkg/cache"
+	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/cluster"
 	"sigs.k8s.io/controller-runtime/pkg/healthz"
 	"sigs.k8s.io/controller-runtime/pkg/log/zap"
 	metricsserver "sigs.k8s.io/controller-runtime/pkg/metrics/server"
@@ -98,6 +105,10 @@ func main() {
 		os.Exit(1)
 	}
 
+	// Filled once write-back GVKs are resolved; providers create clusters only after the manager starts.
+	var spokeCacheByObject map[client.Object]cache.ByObject
+	spokeClusterOptions := []cluster.Option{func(o *cluster.Options) { o.Cache.ByObject = spokeCacheByObject }}
+
 	// Build the REST config and select the multicluster provider.
 	var (
 		restConfig        *rest.Config
@@ -119,7 +130,7 @@ func main() {
 			os.Exit(1)
 		}
 
-		provider = kindprovider.New(kindprovider.Options{Prefix: kindClustersPrefix})
+		provider = kindprovider.New(kindprovider.Options{Prefix: kindClustersPrefix, ClusterOptions: spokeClusterOptions})
 		setupLog.Info("using kind provider", "hubKubeconfig", kindHubKubeconfig, "prefix", kindClustersPrefix)
 	} else {
 		if *providerFile == "" {
@@ -135,6 +146,7 @@ func main() {
 
 		restConfig = ctrl.GetConfigOrDie()
 		inventoryProvider, err = clusterinventoryapi.New(clusterinventoryapi.Options{
+			ClusterOptions: spokeClusterOptions,
 			KubeconfigStrategyOption: kubeconfigstrategy.Option{
 				AccessProvider: &kubeconfigstrategy.AccessProviderOption{
 					Provider: accessCfg,
@@ -222,19 +234,32 @@ func main() {
 		setupLog.Info("registered event replay controller")
 	}
 
-	// Build allowed secret types from config.
-	allowedSecretTypes := make([]corev1.SecretType, len(ctrlConfig.SecretTypes))
-	for i, t := range ctrlConfig.SecretTypes {
-		allowedSecretTypes[i] = corev1.SecretType(t)
-	}
-
-	// Register the secret controller (hub-only, namespace-label-filtered).
-	secretReconciler := crsynccontroller.NewSecretReconciler(mgr.GetLocalManager().GetClient(), mgr, crsynccontroller.WithNamespaceLabel(crsynccontroller.LabelSourceCluster))
-	if err := secretReconciler.SetupWithManager(mgr, allowedSecretTypes, hubMaxConcurrentReconciles); err != nil {
-		setupLog.Error(err, "unable to create secret controller")
+	// Write-back GVKs are resolved like resources; an empty list disables write-back.
+	writeBackGVKs, err := gvkResolver.Resolve(ctrlConfig.WriteBack)
+	if err != nil {
+		setupLog.Error(err, "unable to resolve write-back GVKs")
 		os.Exit(1)
 	}
-	setupLog.Info("registered secret controller", "namespaceLabel", crsynccontroller.LabelSourceCluster)
+	for _, gvk := range writeBackGVKs {
+		// A copy written back would be synced to the hub again and overwrite its hub object.
+		if slices.Contains(resolvedGVKs, gvk) {
+			setupLog.Error(fmt.Errorf("%s is in resources and writeBack", gvk.String()), "a GVK can't be synced and written back")
+			os.Exit(1)
+		}
+		writeBackReconciler := crsynccontroller.NewWriteBackReconciler(
+			mgr.GetLocalManager().GetClient(),
+			mgr.GetLocalManager().GetAPIReader(),
+			mgr,
+			gvk,
+			mgr.GetLocalManager().GetEventRecorder("crsync"),
+		)
+		if err := writeBackReconciler.SetupWithManager(mgr, hubMaxConcurrentReconciles); err != nil {
+			setupLog.Error(err, "unable to create write-back controller", "gvk", gvk.String())
+			os.Exit(1)
+		}
+		setupLog.Info("registered write-back controller", "gvk", gvk.String())
+	}
+	spokeCacheByObject = writeBackCacheByObject(writeBackGVKs)
 
 	// Register a runnable that cleans up hub namespaces belonging to a removed spoke cluster.
 	clusterGone := crsynccontroller.ClusterProfileGone(mgr.GetLocalManager().GetAPIReader())
@@ -279,4 +304,16 @@ func getConfig(configFile string) (*config.ControllerConfig, error) {
 	}
 	setupLog.Info("config file loaded", "content", string(data))
 	return config.ReadConfig(data)
+}
+
+// writeBackCacheByObject limits the workload clusters' cache to crsync's copies of write-back GVKs.
+func writeBackCacheByObject(writeBack []schema.GroupVersionKind) map[client.Object]cache.ByObject {
+	selector := labels.SelectorFromSet(labels.Set{crsynccontroller.LabelWriteBackCopy: "true"})
+	byObject := map[client.Object]cache.ByObject{}
+	for _, gvk := range writeBack {
+		obj := &unstructured.Unstructured{}
+		obj.SetGroupVersionKind(gvk)
+		byObject[obj] = cache.ByObject{Label: selector}
+	}
+	return byObject
 }

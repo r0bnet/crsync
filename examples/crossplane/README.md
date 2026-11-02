@@ -27,7 +27,7 @@ The walk needs `get` on every type in the chain. By default the chart grants `ge
 ```bash
 helm upgrade crsync charts/crsync --reuse-values \
   --set eventReplay.enabled=true \
-  --set-json 'eventReplay.ownerResources=[{"group":"kubernetes.m.crossplane.io","resources":["objects"]}]'
+  --set-json 'ownerResources=[{"group":"kubernetes.m.crossplane.io","resources":["objects"]}]'
 ```
 
 ### Example: a mistake the user can fix
@@ -44,6 +44,17 @@ kubectl --context kind-crsyncspoke1 patch xdatabase payments --type=merge -p '{"
 ```
 
 The Warning comes from Crossplane composing on the XR itself, because provider-kubernetes's `Object` CRD already validates the embedded labels. The provider's own Events reach the user through the ownerReference walk. Messages like this one contain hub names (here the composed `Object`'s name), which crsync can't scrub.
+
+## Connection Secrets on the workload cluster
+
+The composition makes the `Object` write a connection Secret, `<name>-connection`, with the database `endpoint`. Crossplane owns it through the `Object`, which is owned by the XR, so crsync's write-back finds the hub copy by owner walk. `install.sh` enables it with `config.writeBack` for Secrets:
+
+```bash
+kubectl --context kind-crsyncspoke1 get secret orders-connection -o jsonpath='{.data.endpoint}' | base64 -d
+#   orders.db.example.internal:5432
+```
+
+Deleting the `XDatabase` deletes the Secret. A hub controller that writes Secrets without ownerReferences can opt them in with the annotation `crsync.r0bnet.github.io/write-back: "true"` instead.
 
 ## Run it
 

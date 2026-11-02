@@ -25,10 +25,9 @@ func (r ResourceGVK) ToGVK() schema.GroupVersionKind {
 type ControllerConfig struct {
 	// Resources is the list of GVKs the controller will watch across all clusters.
 	Resources []ResourceGVK `json:"resources"`
-	// SecretTypes is an optional list of Secret types the secret controller
-	// should reconcile (e.g. "Opaque", "kubernetes.io/tls"). When empty, all
-	// Secret types are reconciled.
-	SecretTypes []string `json:"secretTypes,omitempty"`
+	// WriteBack lists hub GVKs copied back to the workload cluster when they belong to a
+	// hub copy (owner chain or write-back annotation). Empty disables write-back.
+	WriteBack []ResourceGVK `json:"writeBack,omitempty"`
 }
 
 // ReadConfig parses YAML data into a ControllerConfig.

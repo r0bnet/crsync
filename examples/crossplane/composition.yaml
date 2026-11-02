@@ -28,6 +28,12 @@ spec:
                     data: {}
                 providerConfigRef:
                   kind: ClusterProviderConfig
+                # Crossplane writes this Secret next to the XR, owned by the Object; crsync writes it back.
+                connectionDetails:
+                  - apiVersion: v1
+                    kind: ConfigMap
+                    fieldPath: data.endpoint
+                    toConnectionSecretKey: endpoint
             patches:
               # crsync labels every hub copy with its source cluster; one ClusterProviderConfig exists per cluster.
               - type: FromCompositeFieldPath
@@ -36,6 +42,31 @@ spec:
               - type: FromCompositeFieldPath
                 fromFieldPath: metadata.namespace
                 toFieldPath: spec.forProvider.manifest.metadata.namespace
+              - type: FromCompositeFieldPath
+                fromFieldPath: metadata.name
+                toFieldPath: spec.forProvider.manifest.metadata.name
+              - type: FromCompositeFieldPath
+                fromFieldPath: metadata.name
+                toFieldPath: spec.forProvider.manifest.data.endpoint
+                transforms:
+                  - type: string
+                    string:
+                      type: Format
+                      fmt: "%s.db.example.internal:5432"
+              - type: FromCompositeFieldPath
+                fromFieldPath: metadata.name
+                toFieldPath: spec.connectionDetails[0].name
+              - type: FromCompositeFieldPath
+                fromFieldPath: metadata.namespace
+                toFieldPath: spec.connectionDetails[0].namespace
+              - type: FromCompositeFieldPath
+                fromFieldPath: metadata.name
+                toFieldPath: spec.writeConnectionSecretToRef.name
+                transforms:
+                  - type: string
+                    string:
+                      type: Format
+                      fmt: "%s-connection"
               - type: FromCompositeFieldPath
                 fromFieldPath: spec.size
                 toFieldPath: spec.forProvider.manifest.data.size

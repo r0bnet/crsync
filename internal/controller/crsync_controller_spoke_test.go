@@ -44,6 +44,9 @@ type fakeCluster struct {
 
 func (fc *fakeCluster) GetClient() client.Client { return fc.client }
 
+// GetAPIReader returns the same client: fake clients have no cache.
+func (fc *fakeCluster) GetAPIReader() client.Reader { return fc.client }
+
 var testGVK = schema.GroupVersionKind{Group: "test.crsync.r0bnet.github.io", Version: "v1", Kind: "TestResource"}
 
 func newSpokeResource(namespace, name string, spec map[string]any, labels map[string]string) *unstructured.Unstructured {

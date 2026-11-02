@@ -77,25 +77,13 @@ rules:
   - create
   - update
   - delete
-{{/* Secret controller: syncs secrets hub↔spoke, manages finalizers */}}
+{{/* Access plugin reads the kubeconfig Secrets of ClusterProfiles */}}
 - apiGroups:
   - ""
   resources:
   - secrets
   verbs:
   - get
-  - list
-  - watch
-  - create
-  - update
-  - patch
-  - delete
-- apiGroups:
-  - ""
-  resources:
-  - secrets/finalizers
-  verbs:
-  - update
 {{/* Event controller watches events.k8s.io/v1 Events on the hub; the spoke reconciler records FieldConflict events */}}
 - apiGroups:
   - events.k8s.io
@@ -124,11 +112,10 @@ rules:
   - get
   - list
   - watch
-{{/* Access plugin reads kubeconfig secrets (covered by the secrets rule above) */}}
-{{/* Event replay walks ownerReferences; synced GVKs are readable via the rules below */}}
-{{- if .Values.eventReplay.enabled }}
-{{- if .Values.eventReplay.ownerResources }}
-{{- range .Values.eventReplay.ownerResources }}
+{{/* Event replay and write-back walk ownerReferences; synced GVKs are readable via the rules below */}}
+{{- if or .Values.eventReplay.enabled .Values.config.writeBack }}
+{{- if .Values.ownerResources }}
+{{- range .Values.ownerResources }}
 - apiGroups:
   - {{ .group | quote }}
   resources:
@@ -146,6 +133,17 @@ rules:
   verbs:
   - get
 {{- end }}
+{{- end }}
+{{/* Write-back: watches hub objects of the configured GVKs */}}
+{{- range .Values.config.writeBack }}
+- apiGroups:
+  - {{ .group | quote }}
+  resources:
+  - {{ .resource | quote }}
+  verbs:
+  - get
+  - list
+  - watch
 {{- end }}
 {{/* --- Dynamic rules from configured GVKs --- */}}
 {{- range .Values.config.resources }}
