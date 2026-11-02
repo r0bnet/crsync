@@ -52,7 +52,12 @@ func (r *eventReconciler) SetupWithManager(mgr mcmanager.Manager) error {
 }
 
 // Reconcile replays a hub Event onto the spoke object its hub copy was synced from.
+// Requests for a spoke that isn't engaged yet are retried.
 func (r *eventReconciler) Reconcile(ctx context.Context, req mcreconcile.Request) (ctrl.Result, error) {
+	return retryNotEngaged(ctx, req, r.reconcile)
+}
+
+func (r *eventReconciler) reconcile(ctx context.Context, req mcreconcile.Request) (ctrl.Result, error) {
 	logger := log.FromContext(ctx).WithValues("event", req.NamespacedName)
 	ctx = log.IntoContext(ctx, logger)
 

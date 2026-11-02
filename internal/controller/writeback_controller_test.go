@@ -11,10 +11,12 @@ import (
 	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/tools/events"
+	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 	"sigs.k8s.io/controller-runtime/pkg/cluster"
 	"sigs.k8s.io/multicluster-runtime/pkg/multicluster"
+	mcreconcile "sigs.k8s.io/multicluster-runtime/pkg/reconcile"
 )
 
 var secretGVK = corev1.SchemeGroupVersion.WithKind("Secret")
@@ -238,22 +240,42 @@ func TestWriteBack_ignoresObjectsOutsideHubNamespaces(t *testing.T) {
 	}
 }
 
-// At startup hub requests arrive before the workload cluster is engaged.
-func TestWriteBack_retriesWhenClusterNotEngaged(t *testing.T) {
-	s := newWriteBackTestSetup(t, true, []client.Object{eventTestComposed("my-db"), writeBackHubSecret(true, nil)})
-	s.r.clusters = notEngagedClusters{}
-
-	result, err := s.r.Reconcile(context.Background(), newRequest("", eventTestHubNS, "my-db-conn"))
-	if err != nil {
-		t.Fatalf("reconcile: %v", err)
-	}
-	if result.RequeueAfter != clusterNotEngagedRetry {
-		t.Errorf("RequeueAfter = %v, want %v: the request must not be dropped", result.RequeueAfter, clusterNotEngagedRetry)
-	}
-}
-
 type notEngagedClusters struct{}
 
 func (notEngagedClusters) GetCluster(_ context.Context, name multicluster.ClusterName) (cluster.Cluster, error) {
 	return nil, fmt.Errorf("cluster %s: %w", name, multicluster.ErrClusterNotFound)
+}
+
+// At startup hub requests arrive before the workload cluster is engaged; dropping them
+// would leave copies, status and Events stale until the next hub change.
+func TestHubSideReconcilers_retryWhenClusterNotEngaged(t *testing.T) {
+	writeBack := newWriteBackTestSetup(t, true, []client.Object{eventTestComposed("my-db"), writeBackHubSecret(true, nil)}).r
+	writeBack.clusters = notEngagedClusters{}
+
+	hubCopy := newHubCopy(eventTestHubNS, "my-db", map[string]any{"ready": true}, eventTestHubCopy().GetLabels())
+	statusSync := NewCRSyncFromHubReconciler(hubClientWith(hubCopy), notEngagedClusters{}, testGVK)
+
+	eventReplay, _, _ := newEventTestSetup(crsyncNSLabels, eventTestHubCopy(), eventTestHubEvent(hubCopyRef()))
+	eventReplay.clusters = notEngagedClusters{}
+
+	for name, tc := range map[string]struct {
+		r interface {
+			Reconcile(context.Context, mcreconcile.Request) (ctrl.Result, error)
+		}
+		req mcreconcile.Request
+	}{
+		"write-back":   {r: writeBack, req: newRequest("", eventTestHubNS, "my-db-conn")},
+		"status sync":  {r: statusSync, req: newRequest("", eventTestHubNS, "my-db")},
+		"event replay": {r: eventReplay, req: newRequest("", eventTestHubNS, "hub-event")},
+	} {
+		t.Run(name, func(t *testing.T) {
+			result, err := tc.r.Reconcile(context.Background(), tc.req)
+			if err != nil {
+				t.Fatalf("reconcile: %v", err)
+			}
+			if result.RequeueAfter != clusterNotEngagedRetry {
+				t.Errorf("RequeueAfter = %v, want %v: the request must not be dropped", result.RequeueAfter, clusterNotEngagedRetry)
+			}
+		})
+	}
 }

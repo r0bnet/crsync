@@ -49,7 +49,12 @@ func (r *crsyncFromHubReconciler) SetupWithManager(mgr mcmanager.Manager, maxCon
 // The hub copy lives in a namespace named <cluster>--<namespace>. Its labels
 // carry the source cluster (LabelSourceCluster), namespace (LabelSourceNamespace)
 // and name (LabelSourceName) that identify the resource on the spoke.
+// Requests for a spoke that isn't engaged yet are retried.
 func (r *crsyncFromHubReconciler) Reconcile(ctx context.Context, req mcreconcile.Request) (ctrl.Result, error) {
+	return retryNotEngaged(ctx, req, r.reconcile)
+}
+
+func (r *crsyncFromHubReconciler) reconcile(ctx context.Context, req mcreconcile.Request) (ctrl.Result, error) {
 	logger := log.FromContext(ctx).WithValues(
 		"gvk", r.gvk.String(),
 		"source", "hub",
