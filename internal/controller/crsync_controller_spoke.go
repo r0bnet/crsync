@@ -34,6 +34,8 @@ const (
 	// FinalizerHubCopyCleanup is added to spoke resources to ensure the hub copy is
 	// removed before the source object is garbage-collected by Kubernetes.
 	FinalizerHubCopyCleanup = "crsync.r0bnet.github.io/hub-copy-cleanup"
+	// FieldManager is the server-side apply field manager crsync writes hub copies with.
+	FieldManager = "crsync"
 )
 
 // errHubCopyPending is returned by reconcileDeletion when the hub copy still exists
@@ -160,28 +162,14 @@ func (r *crsyncFromSpokeReconciler) reconcileDeletion(ctx context.Context, spoke
 	return nil
 }
 
-// upsertHubCopy ensures the hub copy of the given spoke resource is present and up to date.
-// It creates the resource on the hub if it does not exist, or updates it if it does.
+// upsertHubCopy server-side applies the hub copy of the given spoke resource.
+// Fields only hub controllers set (e.g. Crossplane's spec.crossplane.compositionRef)
+// are left alone; forcing lets the spoke win fields both sides set.
 func (r *crsyncFromSpokeReconciler) upsertHubCopy(ctx context.Context, sourceObj *unstructured.Unstructured, clusterName, hubNS, name string) error {
 	target := buildTarget(sourceObj, r.gvk, clusterName, hubNS, name)
-
-	existing := &unstructured.Unstructured{}
-	existing.SetGroupVersionKind(r.gvk)
-	if err := r.hubClient.Get(ctx, client.ObjectKey{Namespace: hubNS, Name: name}, existing); err != nil {
-		if !apierrors.IsNotFound(err) {
-			return fmt.Errorf("get existing hub resource: %w", err)
-		}
-		if err := r.hubClient.Create(ctx, target); err != nil {
-			return fmt.Errorf("create hub resource: %w", err)
-		}
-		return nil
-	}
-
-	// Carry over resourceVersion and apply new content.
-	// TODO: do we need to preserve the resource version at all or will that be covered by kuberntes itself?
-	target.SetResourceVersion(existing.GetResourceVersion())
-	if err := r.hubClient.Update(ctx, target); err != nil {
-		return fmt.Errorf("update hub resource: %w", err)
+	err := r.hubClient.Apply(ctx, client.ApplyConfigurationFromUnstructured(target), client.FieldOwner(FieldManager), client.ForceOwnership)
+	if err != nil {
+		return fmt.Errorf("apply hub resource: %w", err)
 	}
 	return nil
 }

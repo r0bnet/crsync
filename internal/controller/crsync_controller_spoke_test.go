@@ -406,3 +406,74 @@ func TestReconcile_hubNamespaceOfOtherClusterRejected(t *testing.T) {
 		t.Fatalf("expected no hub copy in the other cluster's namespace, got err=%v", err)
 	}
 }
+
+func TestReconcile_hubOwnedSpecFieldSurvivesResync(t *testing.T) {
+	sourceCR := newSpokeResource("default", "my-cr", map[string]any{"size": "small", "tier": "dev"}, nil)
+	sc := spokeClient(sourceCR)
+	hc := hubClientWith()
+	ctx := context.Background()
+	key := client.ObjectKey{Namespace: "spoke1--default", Name: "my-cr"}
+
+	r := NewCRSyncFromSpokeReconciler(hc, &fakeClusterProvider{
+		clusters: map[string]cluster.Cluster{"spoke1": &fakeCluster{client: sc}},
+	}, testGVK)
+	reconcile := func() {
+		t.Helper()
+		_, err := r.Reconcile(ctx, newRequest("spoke1", "default", "my-cr"))
+		if err != nil {
+			t.Fatalf("unexpected reconcile error: %v", err)
+		}
+	}
+	reconcile() // adds the finalizer
+	reconcile() // creates the hub copy
+
+	// A hub controller (like Crossplane) sets a field the spoke never sends, using a plain update.
+	hub := &unstructured.Unstructured{}
+	hub.SetGroupVersionKind(testGVK)
+	err := hc.Get(ctx, key, hub)
+	if err != nil {
+		t.Fatalf("get hub copy: %v", err)
+	}
+	err = unstructured.SetNestedField(hub.Object, "default-composition", "spec", "crossplane", "compositionRef", "name")
+	if err != nil {
+		t.Fatalf("set hub-owned field: %v", err)
+	}
+	err = hc.Update(ctx, hub, client.FieldOwner("crossplane"))
+	if err != nil {
+		t.Fatalf("update hub copy as hub controller: %v", err)
+	}
+
+	// The user changes one field and removes another on the spoke.
+	src := &unstructured.Unstructured{}
+	src.SetGroupVersionKind(testGVK)
+	err = sc.Get(ctx, client.ObjectKey{Namespace: "default", Name: "my-cr"}, src)
+	if err != nil {
+		t.Fatalf("get spoke source: %v", err)
+	}
+	src.Object["spec"] = map[string]any{"size": "large"}
+	err = sc.Update(ctx, src)
+	if err != nil {
+		t.Fatalf("update spoke source: %v", err)
+	}
+
+	reconcile()
+
+	got := &unstructured.Unstructured{}
+	got.SetGroupVersionKind(testGVK)
+	err = hc.Get(ctx, key, got)
+	if err != nil {
+		t.Fatalf("get hub copy after resync: %v", err)
+	}
+	ref, _, _ := unstructured.NestedString(got.Object, "spec", "crossplane", "compositionRef", "name")
+	if ref != "default-composition" {
+		t.Errorf("hub-owned spec.crossplane.compositionRef.name was lost, got %q", ref)
+	}
+	size, _, _ := unstructured.NestedString(got.Object, "spec", "size")
+	if size != "large" {
+		t.Errorf("expected spec.size = large from the spoke, got %q", size)
+	}
+	_, found, _ := unstructured.NestedFieldNoCopy(got.Object, "spec", "tier")
+	if found {
+		t.Error("expected spec.tier removed on the hub after it was removed on the spoke")
+	}
+}
