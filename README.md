@@ -175,3 +175,7 @@ go vet ./...
 ```
 
 Clean up with `test/hack/cleanup-kind-clusters.sh` (pass `--hub`, `--spokes`, `--spoke-prefix` if you changed them), or recreate everything with `setup-local-dev-clusters.sh --cleanup`.
+
+## License
+
+[Apache License 2.0](LICENSE)
