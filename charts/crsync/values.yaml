@@ -59,7 +59,7 @@ containerSecurityContext:
 
 config:
   # resources: list of GVKs to sync. Each entry needs group, kind, and resource (plural API name).
-  # version is optional; when empty, all versions are discovered from the API server.
+  # version is optional; when empty, the preferred version served by the hub is used.
   # resource is required for RBAC rule generation (the plural lowercase API resource name).
   resources: []
   #  - group: "crsync.test.io"

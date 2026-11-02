@@ -3,6 +3,7 @@ package resolver
 import (
 	"fmt"
 
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/client-go/discovery"
 
@@ -11,8 +12,7 @@ import (
 
 // GVKResolver resolves configured resource GVKs against the API server.
 // Resources that already specify a version are kept as-is. Resources with an
-// empty version are expanded to every version the API server reports for that
-// Group and Kind.
+// empty version get the group's preferred version that serves the Kind.
 type GVKResolver struct {
 	disc discovery.DiscoveryInterface
 }
@@ -22,9 +22,8 @@ func NewGVKResolver(disc discovery.DiscoveryInterface) *GVKResolver {
 	return &GVKResolver{disc: disc}
 }
 
-// Resolve expands the given resources into concrete GVKs. Resources with a
-// non-empty version are returned unchanged. Resources with an empty version are
-// looked up via the discovery API and expanded to all matching versions.
+// Resolve returns one concrete GVK per resource. One version per Kind keeps two
+// controllers from writing the same objects through different versions.
 func (r *GVKResolver) Resolve(resources []config.ResourceGVK) ([]schema.GroupVersionKind, error) {
 	var (
 		resolved             []schema.GroupVersionKind
@@ -42,34 +41,47 @@ func (r *GVKResolver) Resolve(resources []config.ResourceGVK) ([]schema.GroupVer
 		return resolved, nil
 	}
 
-	_, apiResourceLists, err := r.disc.ServerGroupsAndResources()
+	groups, apiResourceLists, err := r.disc.ServerGroupsAndResources()
 	if err != nil {
 		return nil, fmt.Errorf("discovering server resources: %w", err)
 	}
 
-	for _, res := range versionsToBeResolved {
-		var found bool
-		for _, rl := range apiResourceLists {
-			gv, parseErr := schema.ParseGroupVersion(rl.GroupVersion)
-			if parseErr != nil || gv.Group != res.Group {
-				continue
-			}
-			for _, apiRes := range rl.APIResources {
-				if apiRes.Kind == res.Kind {
-					resolved = append(resolved, schema.GroupVersionKind{
-						Group:   res.Group,
-						Version: gv.Version,
-						Kind:    res.Kind,
-					})
-					found = true
-					break
-				}
-			}
+	served := map[schema.GroupVersionKind]bool{}
+	for _, rl := range apiResourceLists {
+		gv, parseErr := schema.ParseGroupVersion(rl.GroupVersion)
+		if parseErr != nil {
+			continue
 		}
-		if !found {
-			return nil, fmt.Errorf("no versions found for group=%q kind=%q", res.Group, res.Kind)
+		for _, apiRes := range rl.APIResources {
+			served[gv.WithKind(apiRes.Kind)] = true
 		}
 	}
 
+	for _, res := range versionsToBeResolved {
+		gvk, ok := preferredGVK(groups, served, res)
+		if !ok {
+			return nil, fmt.Errorf("no versions found for group=%q kind=%q", res.Group, res.Kind)
+		}
+		resolved = append(resolved, gvk)
+	}
+
 	return resolved, nil
+}
+
+// preferredGVK returns the group's preferred version if it serves the Kind,
+// otherwise the first served version in the server's priority order.
+func preferredGVK(groups []*metav1.APIGroup, served map[schema.GroupVersionKind]bool, res config.ResourceGVK) (schema.GroupVersionKind, bool) {
+	for _, group := range groups {
+		if group.Name != res.Group {
+			continue
+		}
+		versions := append([]metav1.GroupVersionForDiscovery{group.PreferredVersion}, group.Versions...)
+		for _, v := range versions {
+			gvk := schema.GroupVersionKind{Group: res.Group, Version: v.Version, Kind: res.Kind}
+			if served[gvk] {
+				return gvk, true
+			}
+		}
+	}
+	return schema.GroupVersionKind{}, false
 }

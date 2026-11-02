@@ -186,7 +186,7 @@ func main() {
 	}
 
 	// Resolve configured resources to concrete GVKs. Resources without a
-	// version are expanded to all versions found on the API server.
+	// version get the preferred version served by the API server.
 	disc, err := discovery.NewDiscoveryClientForConfig(restConfig)
 	if err != nil {
 		setupLog.Error(err, "unable to create discovery client")

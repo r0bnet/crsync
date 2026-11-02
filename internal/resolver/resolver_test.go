@@ -57,17 +57,16 @@ func TestGVKResolver_Resolve(t *testing.T) {
 			},
 		},
 		{
-			name: "version omitted discovers all versions",
+			name: "version omitted picks only the preferred version",
 			resources: []config.ResourceGVK{
 				{Group: "stable.example.com", Kind: "CronTab"},
 			},
 			wantGVKs: []schema.GroupVersionKind{
 				{Group: "stable.example.com", Version: "v1", Kind: "CronTab"},
-				{Group: "stable.example.com", Version: "v1beta1", Kind: "CronTab"},
 			},
 		},
 		{
-			name: "mixed explicit and discovered",
+			name: "mixed explicit and discovered, falling back when the preferred version lacks the kind",
 			resources: []config.ResourceGVK{
 				{Group: "apps", Version: "v1", Kind: "Deployment"},
 				{Group: "stable.example.com", Kind: "Widget"},

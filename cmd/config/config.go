@@ -8,8 +8,8 @@ import (
 )
 
 // ResourceGVK defines a Group/Version/Kind tuple to watch across clusters.
-// Version is optional; when empty, all available versions for the given
-// Group and Kind are discovered from the API server.
+// Version is optional; when empty, the API server's preferred version serving
+// the Group and Kind is used.
 type ResourceGVK struct {
 	Group   string `json:"group"`
 	Version string `json:"version,omitempty"`

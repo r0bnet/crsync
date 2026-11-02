@@ -40,7 +40,7 @@ Then try the Crossplane example: [examples/crossplane](examples/crossplane). Cle
 ### Synced resources (`--config`)
 
 ```yaml
-resources:            # GVKs to sync; without a version, all versions served by the hub are used
+resources:            # GVKs to sync; without a version, the hub's preferred version is used
   - group: demo.crsync.io
     kind: XDatabase
 writeBack:            # optional; GVKs copied back to the spoke, see Write-back
