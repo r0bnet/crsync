@@ -1,0 +1,37 @@
+# Generic transformation hook: mutate hub copies on admission instead of in crsync.
+# Matches only namespaces crsync created (they carry the source-cluster label).
+apiVersion: admissionregistration.k8s.io/v1
+kind: MutatingAdmissionPolicy
+metadata:
+  name: crsync-source-cluster-annotation
+spec:
+  matchConstraints:
+    resourceRules:
+      - apiGroups: ["crsync.test.io"]
+        apiVersions: ["*"]
+        operations: ["CREATE", "UPDATE"]
+        resources: ["crsynctests"]
+    namespaceSelector:
+      matchExpressions:
+        - key: crsync.r0bnet.github.io/source-cluster
+          operator: Exists
+  failurePolicy: Fail
+  reinvocationPolicy: Never
+  mutations:
+    - patchType: ApplyConfiguration
+      applyConfiguration:
+        expression: >
+          Object{
+            metadata: Object.metadata{
+              annotations: {
+                "crsync.example/source-cluster": object.metadata.labels["crsync.r0bnet.github.io/source-cluster"]
+              }
+            }
+          }
+---
+apiVersion: admissionregistration.k8s.io/v1
+kind: MutatingAdmissionPolicyBinding
+metadata:
+  name: crsync-source-cluster-annotation
+spec:
+  policyName: crsync-source-cluster-annotation

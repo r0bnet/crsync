@@ -1,0 +1,8 @@
+apiVersion: demo.crsync.io/v1alpha1
+kind: XDatabase
+metadata:
+  name: orders
+  namespace: default
+spec:
+  size: small
+  message: "hello from the workload cluster"

@@ -1,0 +1,47 @@
+apiVersion: apiextensions.crossplane.io/v1
+kind: Composition
+metadata:
+  name: xdatabases.demo.crsync.io
+spec:
+  compositeTypeRef:
+    apiVersion: demo.crsync.io/v1alpha1
+    kind: XDatabase
+  mode: Pipeline
+  pipeline:
+    - step: patch-and-transform
+      functionRef:
+        name: function-patch-and-transform
+      input:
+        apiVersion: pt.fn.crossplane.io/v1beta1
+        kind: Resources
+        resources:
+          # A ConfigMap stands in for the real database, so the demo needs no cloud account.
+          - name: database
+            base:
+              apiVersion: kubernetes.m.crossplane.io/v1alpha1
+              kind: Object
+              spec:
+                forProvider:
+                  manifest:
+                    apiVersion: v1
+                    kind: ConfigMap
+                    data: {}
+                providerConfigRef:
+                  kind: ClusterProviderConfig
+            patches:
+              # crsync labels every hub copy with its source cluster; one ClusterProviderConfig exists per cluster.
+              - type: FromCompositeFieldPath
+                fromFieldPath: metadata.labels[crsync.r0bnet.github.io/source-cluster]
+                toFieldPath: spec.providerConfigRef.name
+              - type: FromCompositeFieldPath
+                fromFieldPath: metadata.namespace
+                toFieldPath: spec.forProvider.manifest.metadata.namespace
+              - type: FromCompositeFieldPath
+                fromFieldPath: spec.size
+                toFieldPath: spec.forProvider.manifest.data.size
+              - type: FromCompositeFieldPath
+                fromFieldPath: spec.message
+                toFieldPath: spec.forProvider.manifest.data.message
+              - type: ToCompositeFieldPath
+                fromFieldPath: spec.providerConfigRef.name
+                toFieldPath: status.providerConfig

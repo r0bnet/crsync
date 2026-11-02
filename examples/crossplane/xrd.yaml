@@ -1,0 +1,33 @@
+apiVersion: apiextensions.crossplane.io/v2
+kind: CompositeResourceDefinition
+metadata:
+  name: xdatabases.demo.crsync.io
+spec:
+  scope: Namespaced
+  group: demo.crsync.io
+  names:
+    kind: XDatabase
+    plural: xdatabases
+  versions:
+    - name: v1alpha1
+      served: true
+      referenceable: true
+      schema:
+        openAPIV3Schema:
+          type: object
+          properties:
+            spec:
+              type: object
+              properties:
+                size:
+                  type: string
+                  enum: [small, medium, large]
+                message:
+                  type: string
+              required: [size]
+            status:
+              type: object
+              properties:
+                # Which ClusterProviderConfig the composed resources were bound to.
+                providerConfig:
+                  type: string
