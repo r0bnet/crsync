@@ -68,6 +68,7 @@ The hub and every spoke need the CRDs of these resources. Spokes need only the C
 |-------|---------|---------|
 | `config.resources` | `[]` | Synced GVKs. Each entry also needs `resource` (plural), used for RBAC |
 | `config.writeBack` | `[]` | [Write-back](#write-back) GVKs. Each entry also needs `resource` (plural), used for RBAC |
+| `config.writeBackCopyLabel` | `""` | Label key marking write-back copies; empty uses the default |
 | `clusterProfile.accessProvider.image` | `kubeconfig-secretreader:v0.1.3` | Exec plugin mounted as an image volume (needs Kubernetes image volumes) |
 | `eventReplay.enabled` | `false` | Event replay plus its RBAC |
 | `ownerResources` | `[]` | Types readable during the owner walk (event replay, write-back); empty means `get` on `*/*` |
@@ -87,7 +88,7 @@ Off by default: the walk needs `get` on every owner type, which is `*/*` unless 
 
 `writeBack` lists hub GVKs, e.g. Secrets, to copy into the source namespace on the spoke. An object is copied if its owner chain leads to a hub copy, or if it has `crsync.r0bnet.github.io/write-back: "true"` (for objects without owners).
 
-- The copy keeps the name and everything but `metadata` and `status`, and gets the label `crsync.r0bnet.github.io/write-back-copy: "true"`. crsync never touches objects without that label (`WriteBackConflict` Warning).
+- The copy keeps the name and everything but `metadata` and `status`, and gets the label `crsync.r0bnet.github.io/write-back-copy: "true"` (key configurable with `writeBackCopyLabel`; changing it orphans existing copies). crsync never touches objects without that label (`WriteBackConflict` Warning).
 - Owned copies get an ownerReference to the spoke object. All copies go when their hub object goes.
 - A GVK the spoke doesn't serve gives a `WriteBackTypeMissing` Warning and is retried. A GVK can't be in both `resources` and `writeBack`.
 

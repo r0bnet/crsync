@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"slices"
+	"strings"
 
 	corev1 "k8s.io/api/core/v1"
 	eventsv1 "k8s.io/api/events/v1"
@@ -14,6 +15,7 @@ import (
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
+	"k8s.io/apimachinery/pkg/util/validation"
 	"k8s.io/client-go/discovery"
 	_ "k8s.io/client-go/plugin/pkg/client/auth"
 	"k8s.io/client-go/rest"
@@ -240,6 +242,14 @@ func main() {
 		setupLog.Error(err, "unable to resolve write-back GVKs")
 		os.Exit(1)
 	}
+	copyLabel := ctrlConfig.WriteBackCopyLabel
+	if copyLabel == "" {
+		copyLabel = crsynccontroller.DefaultWriteBackCopyLabel
+	}
+	if errs := validation.IsQualifiedName(copyLabel); len(errs) > 0 {
+		setupLog.Error(fmt.Errorf("%s", strings.Join(errs, "; ")), "invalid writeBackCopyLabel", "label", copyLabel)
+		os.Exit(1)
+	}
 	for _, gvk := range writeBackGVKs {
 		// A copy written back would be synced to the hub again and overwrite its hub object.
 		if slices.Contains(resolvedGVKs, gvk) {
@@ -252,6 +262,7 @@ func main() {
 			mgr,
 			gvk,
 			mgr.GetLocalManager().GetEventRecorder("crsync"),
+			copyLabel,
 		)
 		if err := writeBackReconciler.SetupWithManager(mgr, hubMaxConcurrentReconciles); err != nil {
 			setupLog.Error(err, "unable to create write-back controller", "gvk", gvk.String())
@@ -259,7 +270,7 @@ func main() {
 		}
 		setupLog.Info("registered write-back controller", "gvk", gvk.String())
 	}
-	spokeCacheByObject = writeBackCacheByObject(writeBackGVKs)
+	spokeCacheByObject = writeBackCacheByObject(writeBackGVKs, copyLabel)
 
 	// Register a runnable that cleans up hub namespaces belonging to a removed spoke cluster.
 	clusterGone := crsynccontroller.ClusterProfileGone(mgr.GetLocalManager().GetAPIReader())
@@ -307,8 +318,8 @@ func getConfig(configFile string) (*config.ControllerConfig, error) {
 }
 
 // writeBackCacheByObject limits the workload clusters' cache to crsync's copies of write-back GVKs.
-func writeBackCacheByObject(writeBack []schema.GroupVersionKind) map[client.Object]cache.ByObject {
-	selector := labels.SelectorFromSet(labels.Set{crsynccontroller.LabelWriteBackCopy: "true"})
+func writeBackCacheByObject(writeBack []schema.GroupVersionKind, copyLabel string) map[client.Object]cache.ByObject {
+	selector := labels.SelectorFromSet(labels.Set{copyLabel: "true"})
 	byObject := map[client.Object]cache.ByObject{}
 	for _, gvk := range writeBack {
 		obj := &unstructured.Unstructured{}

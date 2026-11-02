@@ -28,6 +28,9 @@ type ControllerConfig struct {
 	// WriteBack lists hub GVKs copied back to the workload cluster when they belong to a
 	// hub copy (owner chain or write-back annotation). Empty disables write-back.
 	WriteBack []ResourceGVK `json:"writeBack,omitempty"`
+	// WriteBackCopyLabel is the label key marking crsync's copies on workload clusters.
+	// Empty means the default; changing it orphans existing copies.
+	WriteBackCopyLabel string `json:"writeBackCopyLabel,omitempty"`
 }
 
 // ReadConfig parses YAML data into a ControllerConfig.

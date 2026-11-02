@@ -25,6 +25,9 @@ data:
         kind: {{ .kind | quote }}
     {{- end }}
     {{- end }}
+    {{- if .Values.config.writeBackCopyLabel }}
+    writeBackCopyLabel: {{ .Values.config.writeBackCopyLabel | quote }}
+    {{- end }}
   clusterprofile-provider.json: |
     {
       "providers": [

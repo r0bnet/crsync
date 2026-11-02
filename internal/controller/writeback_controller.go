@@ -33,8 +33,8 @@ import (
 const (
 	// AnnotationWriteBack marks a hub object for write-back when no owner chain leads to a hub copy.
 	AnnotationWriteBack = "crsync.r0bnet.github.io/write-back"
-	// LabelWriteBackCopy marks objects crsync wrote back; crsync never touches objects without it.
-	LabelWriteBackCopy = "crsync.r0bnet.github.io/write-back-copy"
+	// DefaultWriteBackCopyLabel marks objects crsync wrote back; crsync never touches objects without it.
+	DefaultWriteBackCopyLabel = "crsync.r0bnet.github.io/write-back-copy"
 	// ReasonWriteBackConflict is recorded when an object crsync doesn't manage blocks a copy.
 	ReasonWriteBackConflict = "WriteBackConflict"
 	// ReasonWriteBackTypeMissing is recorded when the workload cluster doesn't serve the type.
@@ -52,6 +52,8 @@ type writeBackReconciler struct {
 	clusters    ClusterProvider
 	gvk         schema.GroupVersionKind
 	recorder    events.EventRecorder
+	// copyLabel is the label key, with value "true", that marks crsync's copies.
+	copyLabel string
 }
 
 // writeBackTarget is where a hub object is copied to. source is nil for annotated objects.
@@ -61,9 +63,16 @@ type writeBackTarget struct {
 	source    *unstructured.Unstructured
 }
 
-// NewWriteBackReconciler returns a writeBackReconciler for the given GVK.
-func NewWriteBackReconciler(hubClient client.Client, ownerReader client.Reader, clusters ClusterProvider, gvk schema.GroupVersionKind, recorder events.EventRecorder) *writeBackReconciler {
-	return &writeBackReconciler{hubClient: hubClient, ownerReader: ownerReader, clusters: clusters, gvk: gvk, recorder: recorder}
+// NewWriteBackReconciler returns a writeBackReconciler for the given GVK whose copies carry copyLabel.
+func NewWriteBackReconciler(hubClient client.Client, ownerReader client.Reader, clusters ClusterProvider, gvk schema.GroupVersionKind, recorder events.EventRecorder, copyLabel string) *writeBackReconciler {
+	return &writeBackReconciler{
+		hubClient:   hubClient,
+		ownerReader: ownerReader,
+		clusters:    clusters,
+		gvk:         gvk,
+		recorder:    recorder,
+		copyLabel:   copyLabel,
+	}
 }
 
 // SetupWithManager watches the GVK on the hub, and crsync's copies on workload clusters
@@ -77,15 +86,15 @@ func (r *writeBackReconciler) SetupWithManager(mgr mcmanager.Manager, maxConcurr
 	return mcbuilder.ControllerManagedBy(mgr).
 		Named(fmt.Sprintf("crsync-writeback-%s-%s-%s", r.gvk.Group, r.gvk.Version, r.gvk.Kind)).
 		For(hubObj, mcbuilder.WithEngageWithLocalCluster(true), mcbuilder.WithEngageWithProviderClusters(false)).
-		Watches(spokeObj, writeBackCopyToHubRequest, mcbuilder.WithPredicates(predicate.NewPredicateFuncs(isWriteBackCopy))).
+		Watches(spokeObj, writeBackCopyToHubRequest, mcbuilder.WithPredicates(predicate.NewPredicateFuncs(r.isCopy))).
 		WithOptions(mccontroller.Options{
 			MaxConcurrentReconciles: maxConcurrentReconciles,
 		}).
 		Complete(r)
 }
 
-func isWriteBackCopy(obj client.Object) bool {
-	return obj.GetLabels()[LabelWriteBackCopy] == "true"
+func (r *writeBackReconciler) isCopy(obj client.Object) bool {
+	return obj.GetLabels()[r.copyLabel] == "true"
 }
 
 // writeBackCopyToHubRequest maps a copy on a workload cluster to its hub object.
@@ -155,7 +164,7 @@ func (r *writeBackReconciler) reconcile(ctx context.Context, req mcreconcile.Req
 	existing := &unstructured.Unstructured{}
 	existing.SetGroupVersionKind(r.gvk)
 	err = spokeCluster.GetAPIReader().Get(ctx, client.ObjectKey{Namespace: target.namespace, Name: hubObj.GetName()}, existing)
-	if err == nil && !isWriteBackCopy(existing) {
+	if err == nil && !r.isCopy(existing) {
 		r.warn(ctx, spokeClient, hubObj, target, ReasonWriteBackConflict,
 			fmt.Sprintf("%s %s already exists and isn't managed by crsync, so it is left unchanged", r.gvk.Kind, hubObj.GetName()))
 		return ctrl.Result{}, nil
@@ -164,7 +173,7 @@ func (r *writeBackReconciler) reconcile(ctx context.Context, req mcreconcile.Req
 		return ctrl.Result{}, fmt.Errorf("get existing copy: %w", err)
 	}
 
-	copied := writeBackCopy(hubObj, target)
+	copied := writeBackCopy(hubObj, target, r.copyLabel)
 	err = spokeClient.Apply(ctx, client.ApplyConfigurationFromUnstructured(copied), client.FieldOwner(FieldManager), client.ForceOwnership)
 	if err != nil {
 		return ctrl.Result{}, fmt.Errorf("apply copy to spoke: %w", err)
@@ -252,7 +261,7 @@ func (r *writeBackReconciler) deleteCopy(ctx context.Context, hubNamespaceName, 
 	if err != nil {
 		return fmt.Errorf("get copy on spoke: %w", err)
 	}
-	if !isWriteBackCopy(existing) {
+	if !r.isCopy(existing) {
 		return nil
 	}
 
@@ -289,8 +298,8 @@ func (r *writeBackReconciler) warn(ctx context.Context, spokeClient client.Clien
 }
 
 // writeBackCopy builds the copy: every top-level field except metadata and status, plus
-// crsync's label and an ownerReference to the source when there is one.
-func writeBackCopy(hubObj *unstructured.Unstructured, target *writeBackTarget) *unstructured.Unstructured {
+// copyLabel and an ownerReference to the source when there is one.
+func writeBackCopy(hubObj *unstructured.Unstructured, target *writeBackTarget, copyLabel string) *unstructured.Unstructured {
 	out := &unstructured.Unstructured{Object: map[string]any{}}
 	for k, v := range hubObj.Object {
 		if k == "metadata" || k == "status" {
@@ -300,7 +309,7 @@ func writeBackCopy(hubObj *unstructured.Unstructured, target *writeBackTarget) *
 	}
 	out.SetName(hubObj.GetName())
 	out.SetNamespace(target.namespace)
-	out.SetLabels(map[string]string{LabelWriteBackCopy: "true"})
+	out.SetLabels(map[string]string{copyLabel: "true"})
 	if target.source != nil {
 		out.SetOwnerReferences([]metav1.OwnerReference{{
 			APIVersion: target.source.GetAPIVersion(),

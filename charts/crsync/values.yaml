@@ -74,6 +74,9 @@ config:
   #    version: "v1"
   #    kind: "Secret"
   #    resource: "secrets"
+  # writeBackCopyLabel: label key marking crsync's copies on workload clusters. Empty uses
+  # crsync.r0bnet.github.io/write-back-copy. Changing it orphans existing copies.
+  writeBackCopyLabel: ""
 
 serviceAccount:
   name: crsync-controller-manager

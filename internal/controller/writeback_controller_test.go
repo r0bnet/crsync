@@ -75,7 +75,7 @@ func newWriteBackTestSetup(t *testing.T, secretServed bool, hubObjects []client.
 	recorder := events.NewFakeRecorder(10)
 	clusters := &fakeClusterProvider{clusters: map[string]cluster.Cluster{"spoke1": &fakeCluster{client: sc}}}
 	return writeBackTestSetup{
-		r:        NewWriteBackReconciler(hc, hc, clusters, secretGVK, recorder),
+		r:        NewWriteBackReconciler(hc, hc, clusters, secretGVK, recorder, DefaultWriteBackCopyLabel),
 		spoke:    sc,
 		recorder: recorder,
 	}
@@ -113,8 +113,8 @@ func TestWriteBack_copiesOwnedObject(t *testing.T) {
 	if string(got.Data["password"]) != "s3cr3t" || got.Type != "connection.crossplane.io/v1alpha1" {
 		t.Errorf("copy content = type %q data %v, want the hub Secret's type and data", got.Type, got.Data)
 	}
-	wantLabels := map[string]string{LabelWriteBackCopy: "true"}
-	if len(got.Labels) != len(wantLabels) || got.Labels[LabelWriteBackCopy] != "true" {
+	wantLabels := map[string]string{DefaultWriteBackCopyLabel: "true"}
+	if len(got.Labels) != len(wantLabels) || got.Labels[DefaultWriteBackCopyLabel] != "true" {
 		t.Errorf("labels = %v, want only %v (hub labels must not leak)", got.Labels, wantLabels)
 	}
 	if len(got.OwnerReferences) != 1 || got.OwnerReferences[0].UID != eventTestSourceUID {
@@ -199,7 +199,7 @@ func TestWriteBack_deletesManagedCopyWhenHubObjectIsGone(t *testing.T) {
 	managed := &corev1.Secret{ObjectMeta: metav1.ObjectMeta{
 		Name:      "my-db-conn",
 		Namespace: "default",
-		Labels:    map[string]string{LabelWriteBackCopy: "true"},
+		Labels:    map[string]string{DefaultWriteBackCopyLabel: "true"},
 	}}
 	s := newWriteBackTestSetup(t, true, nil, managed)
 	s.reconcile(t)
@@ -217,12 +217,30 @@ func TestWriteBack_keepsUnmanagedObjectWhenHubObjectIsGone(t *testing.T) {
 	}
 }
 
-func TestIsWriteBackCopy(t *testing.T) {
-	if !isWriteBackCopy(&corev1.Secret{ObjectMeta: metav1.ObjectMeta{Labels: map[string]string{LabelWriteBackCopy: "true"}}}) {
-		t.Error("isWriteBackCopy rejected a labelled copy")
+func TestWriteBack_customCopyLabel(t *testing.T) {
+	const customLabel = "example.com/managed-copy"
+	foreign := &corev1.Secret{ObjectMeta: metav1.ObjectMeta{
+		Name:      "my-db-conn",
+		Namespace: "default",
+		Labels:    map[string]string{DefaultWriteBackCopyLabel: "true"},
+	}}
+	s := newWriteBackTestSetup(t, true, []client.Object{eventTestComposed("my-db"), writeBackHubSecret(true, nil)}, foreign)
+	s.r.copyLabel = customLabel
+	s.reconcile(t)
+
+	got, _ := s.spokeCopy(t)
+	if got.Data["password"] != nil {
+		t.Fatal("overwrote an object carrying only the default label although a custom label is configured")
 	}
-	if isWriteBackCopy(&corev1.Secret{}) {
-		t.Error("isWriteBackCopy accepted an unlabelled object")
+
+	err := s.spoke.Delete(context.Background(), got)
+	if err != nil {
+		t.Fatalf("delete foreign secret: %v", err)
+	}
+	s.reconcile(t)
+	got, ok := s.spokeCopy(t)
+	if !ok || got.Labels[customLabel] != "true" || len(got.Labels) != 1 {
+		t.Errorf("copy labels = %v, want only %s", got.Labels, customLabel)
 	}
 }
 
