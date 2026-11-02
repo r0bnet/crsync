@@ -8,9 +8,12 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	eventsv1 "k8s.io/api/events/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
+	clusterinventoryv1alpha1 "sigs.k8s.io/cluster-inventory-api/apis/v1alpha1"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
+	"sigs.k8s.io/multicluster-runtime/pkg/multicluster"
 )
 
 var testScheme = runtime.NewScheme()
@@ -18,6 +21,7 @@ var testScheme = runtime.NewScheme()
 func init() {
 	_ = corev1.AddToScheme(testScheme)
 	_ = eventsv1.AddToScheme(testScheme)
+	_ = clusterinventoryv1alpha1.AddToScheme(testScheme)
 }
 
 func newFakeClient() client.Client {
@@ -26,7 +30,7 @@ func newFakeClient() client.Client {
 
 func TestEngage_doesNotCreateNamespace(t *testing.T) {
 	fc := newFakeClient()
-	p := NewNamespaceDeprovisioner(fc)
+	p := NewNamespaceDeprovisioner(fc, ClusterProfileGone(fc))
 
 	ctx := t.Context()
 
@@ -46,7 +50,7 @@ func TestEngage_doesNotCreateNamespace(t *testing.T) {
 
 func TestEngage_idempotent(t *testing.T) {
 	fc := newFakeClient()
-	p := NewNamespaceDeprovisioner(fc)
+	p := NewNamespaceDeprovisioner(fc, ClusterProfileGone(fc))
 
 	ctx := t.Context()
 
@@ -59,55 +63,111 @@ func TestEngage_idempotent(t *testing.T) {
 	}
 }
 
-func TestEngage_deletesNamespacesByLabelOnCancel(t *testing.T) {
+// createHubNamespaces creates labelled hub namespaces for fleet/spoke1 and fleet/spoke2.
+func createHubNamespaces(t *testing.T, fc client.Client) {
+	t.Helper()
+	for name, cluster := range map[string]string{
+		"fleet-spoke1--default":     "fleet/spoke1",
+		"fleet-spoke1--kube-system": "fleet/spoke1",
+		"fleet-spoke2--default":     "fleet/spoke2",
+	} {
+		ns := &corev1.Namespace{}
+		ns.Name = name
+		ns.Labels = map[string]string{LabelSourceCluster: clusterLabelValue(cluster)}
+		if err := fc.Create(context.Background(), ns); err != nil {
+			t.Fatalf("failed to pre-create namespace %s: %v", name, err)
+		}
+	}
+}
+
+func namespaceExists(t *testing.T, fc client.Client, name string) bool {
+	t.Helper()
+	err := fc.Get(context.Background(), client.ObjectKey{Name: name}, &corev1.Namespace{})
+	if apierrors.IsNotFound(err) {
+		return false
+	}
+	if err != nil {
+		t.Fatalf("get namespace %s: %v", name, err)
+	}
+	return true
+}
+
+func TestEngage_deletesNamespacesWhenProfileRemoved(t *testing.T) {
 	fc := newFakeClient()
-	p := NewNamespaceDeprovisioner(fc)
+	p := NewNamespaceDeprovisioner(fc, ClusterProfileGone(fc))
+	createHubNamespaces(t, fc)
 
 	ctx, cancel := context.WithCancel(context.Background())
-
-	if err := p.Engage(ctx, "spoke1", nil); err != nil {
+	if err := p.Engage(ctx, "fleet/spoke1", nil); err != nil {
 		t.Fatalf("Engage returned error: %v", err)
 	}
-
-	// Simulate the spoke controller having created namespaces with source-cluster labels.
-	for _, nsName := range []string{"spoke1--default", "spoke1--kube-system"} {
-		ns := &corev1.Namespace{}
-		ns.Name = nsName
-		ns.Labels = map[string]string{LabelSourceCluster: "spoke1"}
-		if err := fc.Create(context.Background(), ns); err != nil {
-			t.Fatalf("failed to pre-create namespace %s: %v", nsName, err)
-		}
-	}
-
-	// Also create a namespace for a different cluster that should NOT be deleted.
-	otherNS := &corev1.Namespace{}
-	otherNS.Name = "spoke2--default"
-	otherNS.Labels = map[string]string{LabelSourceCluster: "spoke2"}
-	if err := fc.Create(context.Background(), otherNS); err != nil {
-		t.Fatalf("failed to pre-create namespace spoke2--default: %v", err)
-	}
-
 	cancel()
 
-	// Give the cleanup goroutine a moment to run.
-	time.Sleep(100 * time.Millisecond)
-
-	bgCtx := context.Background()
-
-	// spoke1 namespaces should be deleted.
-	for _, nsName := range []string{"spoke1--default", "spoke1--kube-system"} {
-		ns := &corev1.Namespace{}
-		err := fc.Get(bgCtx, client.ObjectKey{Name: nsName}, ns)
-		if err == nil {
-			t.Errorf("expected namespace %s to be deleted after cancel", nsName)
-		} else if !apierrors.IsNotFound(err) {
-			t.Errorf("expected NotFound for %s, got: %v", nsName, err)
+	deadline := time.Now().Add(2 * time.Second)
+	for namespaceExists(t, fc, "fleet-spoke1--default") || namespaceExists(t, fc, "fleet-spoke1--kube-system") {
+		if time.Now().After(deadline) {
+			t.Fatal("expected fleet/spoke1 namespaces to be deleted after its ClusterProfile is gone")
 		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	if !namespaceExists(t, fc, "fleet-spoke2--default") {
+		t.Error("expected namespace of fleet/spoke2 to survive")
+	}
+}
+
+// A restart, leader change or kubeconfig change cancels the cluster context too.
+func TestCleanup_keepsNamespacesWhileProfileExists(t *testing.T) {
+	fc := newFakeClient()
+	p := NewNamespaceDeprovisioner(fc, ClusterProfileGone(fc))
+	createHubNamespaces(t, fc)
+
+	profile := &clusterinventoryv1alpha1.ClusterProfile{}
+	profile.Namespace = "fleet"
+	profile.Name = "spoke1"
+	if err := fc.Create(context.Background(), profile); err != nil {
+		t.Fatalf("create ClusterProfile: %v", err)
 	}
 
-	// spoke2 namespace should still exist.
-	ns := &corev1.Namespace{}
-	if err := fc.Get(bgCtx, client.ObjectKey{Name: "spoke2--default"}, ns); err != nil {
-		t.Errorf("expected namespace spoke2--default to still exist: %v", err)
+	if err := p.cleanup(context.Background(), "fleet/spoke1"); err != nil {
+		t.Fatalf("cleanup returned error: %v", err)
+	}
+	for _, name := range []string{"fleet-spoke1--default", "fleet-spoke1--kube-system"} {
+		if !namespaceExists(t, fc, name) {
+			t.Errorf("namespace %s was deleted although its ClusterProfile still exists", name)
+		}
+	}
+}
+
+func TestClusterProfileGone(t *testing.T) {
+	deleting := &clusterinventoryv1alpha1.ClusterProfile{}
+	deleting.Namespace = "fleet"
+	deleting.Name = "deleting"
+	deleting.Finalizers = []string{"test/keep"}
+	deleting.DeletionTimestamp = &metav1.Time{Time: time.Now()}
+
+	present := &clusterinventoryv1alpha1.ClusterProfile{}
+	present.Namespace = "fleet"
+	present.Name = "present"
+
+	fc := fake.NewClientBuilder().WithScheme(testScheme).WithObjects(deleting, present).Build()
+	gone := ClusterProfileGone(fc)
+
+	for _, tc := range []struct {
+		cluster string
+		want    bool
+		wantErr bool
+	}{
+		{cluster: "fleet/present", want: false},
+		{cluster: "fleet/deleting", want: true},
+		{cluster: "fleet/missing", want: true},
+		{cluster: "no-namespace", wantErr: true},
+	} {
+		got, err := gone(context.Background(), multicluster.ClusterName(tc.cluster))
+		if (err != nil) != tc.wantErr {
+			t.Errorf("%s: err = %v, wantErr %v", tc.cluster, err, tc.wantErr)
+		}
+		if got != tc.want {
+			t.Errorf("%s: gone = %v, want %v", tc.cluster, got, tc.want)
+		}
 	}
 }

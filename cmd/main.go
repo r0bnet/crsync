@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"flag"
 	"fmt"
 	"os"
@@ -235,10 +236,15 @@ func main() {
 	}
 	setupLog.Info("registered secret controller", "namespaceLabel", crsynccontroller.LabelSourceCluster)
 
-	// Register a runnable that cleans up hub namespaces belonging to a spoke
-	// cluster when it is disengaged.
+	// Register a runnable that cleans up hub namespaces belonging to a removed spoke cluster.
+	clusterGone := crsynccontroller.ClusterProfileGone(mgr.GetLocalManager().GetAPIReader())
+	if useKindProvider {
+		// shortcut: kind clusters have no ClusterProfile, so their hub namespaces are never cleaned up.
+		clusterGone = func(context.Context, multicluster.ClusterName) (bool, error) { return false, nil }
+	}
 	nsDeprovisioner := crsynccontroller.NewNamespaceDeprovisioner(
 		mgr.GetLocalManager().GetClient(),
+		clusterGone,
 	)
 	if err := mgr.Add(nsDeprovisioner); err != nil {
 		setupLog.Error(err, "unable to add namespace provisioner")
