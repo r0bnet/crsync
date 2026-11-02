@@ -73,5 +73,3 @@ serviceAccount:
   name: crsync-controller-manager
   annotations: {}
 
-networkPolicy:
-  enabled: false
