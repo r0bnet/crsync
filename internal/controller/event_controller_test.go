@@ -21,6 +21,8 @@ const (
 	eventTestSourceUID = types.UID("source-uid")
 )
 
+var crsyncNSLabels = map[string]string{LabelSourceCluster: "spoke1", LabelSourceNamespace: "default"}
+
 // eventTestHubCopy returns a hub copy of default/my-db from spoke1.
 func eventTestHubCopy() *unstructured.Unstructured {
 	hubCopy := newSpokeResource(eventTestHubNS, "my-db", map[string]any{"size": "small"}, map[string]string{
@@ -86,8 +88,6 @@ func newEventTestSetup(hubNSLabels map[string]string, hubObjects ...client.Objec
 	}
 	return NewEventReconciler(hc, hc, clusters), sc, clusters
 }
-
-var crsyncNSLabels = map[string]string{LabelSourceCluster: "spoke1", LabelSourceNamespace: "default"}
 
 func reconcileEvent(t *testing.T, r *eventReconciler) {
 	t.Helper()

@@ -20,6 +20,8 @@ import (
 	mcreconcile "sigs.k8s.io/multicluster-runtime/pkg/reconcile"
 )
 
+var testGVK = schema.GroupVersionKind{Group: "test.crsync.r0bnet.github.io", Version: "v1", Kind: "TestResource"}
+
 // fakeClusterProvider implements ClusterProvider by mapping cluster names to
 // pre-built fake clusters. It records every requested cluster name.
 type fakeClusterProvider struct {
@@ -46,8 +48,6 @@ func (fc *fakeCluster) GetClient() client.Client { return fc.client }
 
 // GetAPIReader returns the same client: fake clients have no cache.
 func (fc *fakeCluster) GetAPIReader() client.Reader { return fc.client }
-
-var testGVK = schema.GroupVersionKind{Group: "test.crsync.r0bnet.github.io", Version: "v1", Kind: "TestResource"}
 
 func newSpokeResource(namespace, name string, spec map[string]any, labels map[string]string) *unstructured.Unstructured {
 	obj := &unstructured.Unstructured{
