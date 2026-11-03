@@ -60,6 +60,8 @@ writeBack:            # optional; GVKs copied back to the spoke, see Write-back
 
 The hub and every spoke need the CRDs of these resources. Spokes need only the CRDs, not the controllers behind them.
 
+Only namespaced resources are supported: crsync exits at startup if a GVK in `resources` or `writeBack` is cluster-scoped.
+
 ### Flags
 
 | Flag | Default | Purpose |

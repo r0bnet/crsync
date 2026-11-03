@@ -3,6 +3,7 @@ package resolver
 import (
 	"fmt"
 
+	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/client-go/discovery"
@@ -84,4 +85,19 @@ func preferredGVK(groups []*metav1.APIGroup, served map[schema.GroupVersionKind]
 		}
 	}
 	return schema.GroupVersionKind{}, false
+}
+
+// RequireNamespaced returns an error for the first GVK that is cluster-scoped.
+// Hub copies live in a per-source-namespace hub namespace, so crsync can't sync those.
+func RequireNamespaced(mapper meta.RESTMapper, gvks []schema.GroupVersionKind) error {
+	for _, gvk := range gvks {
+		mapping, err := mapper.RESTMapping(gvk.GroupKind(), gvk.Version)
+		if err != nil {
+			return fmt.Errorf("map %s: %w", gvk.String(), err)
+		}
+		if mapping.Scope.Name() != meta.RESTScopeNameNamespace {
+			return fmt.Errorf("%s is cluster-scoped, only namespaced resources are supported", gvk.String())
+		}
+	}
+	return nil
 }

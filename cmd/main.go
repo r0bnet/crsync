@@ -204,6 +204,10 @@ func main() {
 		setupLog.Error(fmt.Errorf("no GVKs resolved"), "config resources did not resolve to any concrete GVKs")
 		os.Exit(1)
 	}
+	if err := resolver.RequireNamespaced(mgr.GetLocalManager().GetRESTMapper(), resolvedGVKs); err != nil {
+		setupLog.Error(err, "unsupported resource in config")
+		os.Exit(1)
+	}
 
 	// Register a controller for each resolved GVK.
 	for _, gvk := range resolvedGVKs {
@@ -240,6 +244,10 @@ func main() {
 	writeBackGVKs, err := gvkResolver.Resolve(ctrlConfig.WriteBack)
 	if err != nil {
 		setupLog.Error(err, "unable to resolve write-back GVKs")
+		os.Exit(1)
+	}
+	if err := resolver.RequireNamespaced(mgr.GetLocalManager().GetRESTMapper(), writeBackGVKs); err != nil {
+		setupLog.Error(err, "unsupported write-back resource in config")
 		os.Exit(1)
 	}
 	copyLabel := ctrlConfig.WriteBackCopyLabel

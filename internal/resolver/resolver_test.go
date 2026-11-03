@@ -3,6 +3,7 @@ package resolver
 import (
 	"testing"
 
+	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	fakediscovery "k8s.io/client-go/discovery/fake"
@@ -114,5 +115,24 @@ func TestGVKResolver_Resolve(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+func TestRequireNamespaced(t *testing.T) {
+	namespaced := schema.GroupVersionKind{Group: "demo.crsync.io", Version: "v1", Kind: "XDatabase"}
+	clusterScoped := schema.GroupVersionKind{Group: "demo.crsync.io", Version: "v1", Kind: "XCluster"}
+	mapper := meta.NewDefaultRESTMapper(nil)
+	mapper.Add(namespaced, meta.RESTScopeNamespace)
+	mapper.Add(clusterScoped, meta.RESTScopeRoot)
+
+	if err := RequireNamespaced(mapper, []schema.GroupVersionKind{namespaced}); err != nil {
+		t.Fatalf("namespaced GVK rejected: %v", err)
+	}
+	if err := RequireNamespaced(mapper, []schema.GroupVersionKind{namespaced, clusterScoped}); err == nil {
+		t.Fatal("expected an error for a cluster-scoped GVK")
+	}
+	unknown := schema.GroupVersionKind{Group: "demo.crsync.io", Version: "v1", Kind: "Unknown"}
+	if err := RequireNamespaced(mapper, []schema.GroupVersionKind{unknown}); err == nil {
+		t.Fatal("expected an error for an unmapped GVK")
 	}
 }
