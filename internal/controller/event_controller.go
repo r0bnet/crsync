@@ -177,3 +177,41 @@ func replayedEvent(ev *eventsv1.Event, source *unstructured.Unstructured, hops i
 	}
 	return ac
 }
+
+// recordWarning creates a Warning Event on source. Events can't change once created, so the name
+// derives from reason and note: a repeated warning finds its Event, a new note gets a new one.
+func recordWarning(ctx context.Context, c client.Client, source *unstructured.Unstructured, reason, action, note string) error {
+	err := c.Create(ctx, warningEvent(source, reason, action, note))
+	if err != nil && !apierrors.IsAlreadyExists(err) {
+		return err
+	}
+	return nil
+}
+
+// warningEvent builds the Warning Event recordWarning creates.
+func warningEvent(source *unstructured.Unstructured, reason, action, note string) *eventsv1.Event {
+	sum := sha256.Sum256(fmt.Appendf(nil, "%s/%s/%s", source.GetUID(), reason, note))
+	if len(note) > maxEventNoteLength {
+		note = note[:maxEventNoteLength]
+	}
+	return &eventsv1.Event{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      fmt.Sprintf("%s.%s", source.GetName(), hex.EncodeToString(sum[:])[:16]),
+			Namespace: source.GetNamespace(),
+		},
+		EventTime:           metav1.NowMicro(),
+		ReportingController: FieldManager,
+		ReportingInstance:   FieldManager,
+		Action:              action,
+		Reason:              reason,
+		Type:                corev1.EventTypeWarning,
+		Note:                note,
+		Regarding: corev1.ObjectReference{
+			APIVersion: source.GetAPIVersion(),
+			Kind:       source.GetKind(),
+			Namespace:  source.GetNamespace(),
+			Name:       source.GetName(),
+			UID:        source.GetUID(),
+		},
+	}
+}

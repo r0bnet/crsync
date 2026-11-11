@@ -196,3 +196,33 @@ func TestEventReconcile_replayIsIdempotentAndTracksSeries(t *testing.T) {
 		t.Errorf("expected the spoke event series count 3, got %+v", events[0].Series)
 	}
 }
+
+// Events are immutable on a real API server, so a warning must never update an existing Event.
+func TestRecordWarning_neverUpdatesAnEvent(t *testing.T) {
+	sc := spokeClient()
+	source := newSpokeResource("default", "my-cr", nil, nil)
+	source.SetUID("source-uid")
+	ctx := context.Background()
+
+	for _, note := range []string{"first", "first", "second"} {
+		err := recordWarning(ctx, sc, source, ReasonWriteBackConflict, "WriteBack", note)
+		if err != nil {
+			t.Fatalf("record warning %q: %v", note, err)
+		}
+	}
+
+	evs := spokeEvents(t, sc)
+	if len(evs) != 2 {
+		t.Fatalf("expected one Event per distinct note, got %d", len(evs))
+	}
+	notes := map[string]bool{}
+	for _, ev := range evs {
+		notes[ev.Note] = true
+		if ev.Regarding.UID != "source-uid" || ev.Type != corev1.EventTypeWarning {
+			t.Errorf("unexpected Event: regarding=%q type=%q", ev.Regarding.UID, ev.Type)
+		}
+	}
+	if !notes["first"] || !notes["second"] {
+		t.Errorf("expected Events for both notes, got %v", notes)
+	}
+}

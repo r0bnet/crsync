@@ -2,8 +2,6 @@ package controller
 
 import (
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
 	"errors"
 	"fmt"
 	"maps"
@@ -11,7 +9,6 @@ import (
 	"time"
 
 	corev1 "k8s.io/api/core/v1"
-	eventsv1 "k8s.io/api/events/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
@@ -220,8 +217,8 @@ func reportDenied(ctx context.Context, spokeClient client.Client, source *unstru
 		msg = status.Status().Message
 	}
 
-	err := spokeClient.Create(ctx, deniedEvent(source, msg))
-	if err != nil && !apierrors.IsAlreadyExists(err) {
+	err := recordWarning(ctx, spokeClient, source, ReasonAdmissionDenied, "Apply", msg)
+	if err != nil {
 		return fmt.Errorf("record %s event on spoke: %w", ReasonAdmissionDenied, err)
 	}
 
@@ -232,35 +229,6 @@ func reportDenied(ctx context.Context, spokeClient client.Client, source *unstru
 		"message":            msg,
 		"observedGeneration": source.GetGeneration(),
 	})
-}
-
-// deniedEvent builds the Warning Event for a rejected spoke resource. Events are immutable,
-// so the name derives from generation and message: retries find it instead of repeating it.
-func deniedEvent(source *unstructured.Unstructured, note string) *eventsv1.Event {
-	sum := sha256.Sum256(fmt.Appendf(nil, "%s/%d/%s", source.GetUID(), source.GetGeneration(), note))
-	if len(note) > maxEventNoteLength {
-		note = note[:maxEventNoteLength]
-	}
-	return &eventsv1.Event{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      fmt.Sprintf("%s.%s", source.GetName(), hex.EncodeToString(sum[:])[:16]),
-			Namespace: source.GetNamespace(),
-		},
-		EventTime:           metav1.NowMicro(),
-		ReportingController: FieldManager,
-		ReportingInstance:   FieldManager,
-		Action:              "Apply",
-		Reason:              ReasonAdmissionDenied,
-		Type:                corev1.EventTypeWarning,
-		Note:                note,
-		Regarding: corev1.ObjectReference{
-			APIVersion: source.GetAPIVersion(),
-			Kind:       source.GetKind(),
-			Namespace:  source.GetNamespace(),
-			Name:       source.GetName(),
-			UID:        source.GetUID(),
-		},
-	}
 }
 
 // updateAcceptedCondition sets crsync's Accepted condition on the spoke resource, or removes it when cond is nil.

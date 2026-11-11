@@ -6,7 +6,6 @@ import (
 	"time"
 
 	corev1 "k8s.io/api/core/v1"
-	eventsv1 "k8s.io/api/events/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -280,17 +279,7 @@ func (r *writeBackReconciler) warn(ctx context.Context, spokeClient client.Clien
 		return
 	}
 
-	ev := &eventsv1.Event{
-		ObjectMeta:          metav1.ObjectMeta{UID: types.UID(string(hubObj.GetUID()) + "/" + reason)},
-		EventTime:           metav1.NowMicro(),
-		ReportingController: FieldManager,
-		ReportingInstance:   FieldManager,
-		Action:              "WriteBack",
-		Reason:              reason,
-		Type:                corev1.EventTypeWarning,
-		Note:                note,
-	}
-	err := spokeClient.Apply(ctx, replayedEvent(ev, target.source, 0), client.FieldOwner(FieldManager), client.ForceOwnership)
+	err := recordWarning(ctx, spokeClient, target.source, reason, "WriteBack", note)
 	if err != nil {
 		log.FromContext(ctx).Error(err, "failed to record warning on source", "reason", reason)
 	}
