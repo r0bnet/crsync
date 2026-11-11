@@ -310,6 +310,11 @@ func setAcceptedCondition(obj *unstructured.Unstructured, cond map[string]any) b
 	if cond != nil {
 		conditions = append(conditions, cond)
 	}
+	if len(conditions) == 0 {
+		// Like built-in types (omitempty), leave no empty list behind.
+		unstructured.RemoveNestedField(obj.Object, "status", "conditions")
+		return true
+	}
 	return unstructured.SetNestedSlice(obj.Object, conditions, "status", "conditions") == nil
 }
 

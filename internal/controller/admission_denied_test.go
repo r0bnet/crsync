@@ -120,8 +120,8 @@ func TestReconcile_admissionDeniedReportedOnSpoke(t *testing.T) {
 			if result.RequeueAfter != 0 {
 				t.Errorf("unexpected requeue once accepted: %v", result)
 			}
-			if cond := acceptedCondition(spokeSource(t, sc)); cond != nil {
-				t.Errorf("expected the Accepted condition to be removed, got %v", cond)
+			if _, found, _ := unstructured.NestedFieldNoCopy(spokeSource(t, sc).Object, "status", "conditions"); found {
+				t.Error("expected the Accepted condition to be removed without leaving an empty list")
 			}
 		})
 	}
@@ -204,6 +204,15 @@ func TestSetAcceptedCondition(t *testing.T) {
 	conditions, _, _ := unstructured.NestedSlice(obj.Object, "status", "conditions")
 	if len(conditions) != 1 || conditions[0].(map[string]any)["type"] != "Ready" {
 		t.Errorf("expected only the type's own Ready condition to remain, got %v", conditions)
+	}
+
+	only := newSpokeResource("default", "my-cr", nil, nil)
+	setAcceptedCondition(only, denied("first"))
+	if !setAcceptedCondition(only, nil) {
+		t.Fatal("expected removing the only condition to change the object")
+	}
+	if _, found, _ := unstructured.NestedFieldNoCopy(only.Object, "status", "conditions"); found {
+		t.Error("expected no empty conditions list to be left behind")
 	}
 
 	odd := newSpokeResource("default", "my-cr", nil, nil)
