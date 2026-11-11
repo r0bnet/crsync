@@ -18,6 +18,7 @@ default/orders  ── spec, labels ──▶  fleet-spoke1--default/orders ─�
 - **Hub namespaces:** `<cluster>--<namespace>`, e.g. `fleet-spoke1--default` for cluster `fleet/spoke1`.
 - **Labels (contract):** hub copies carry `crsync.r0bnet.github.io/source-cluster` (e.g. `fleet.spoke1`), `source-namespace` and `source-name`. Users can't override them; compositions may select on them.
 - **Spec (spoke → hub):** server-side apply with field manager `crsync`, sending every top-level field except `metadata` and `status` (e.g. `spec`, or `data` for a ConfigMap), plus labels and annotations. Hub-only fields survive; on a conflict the spoke wins and crsync records a `FieldConflict` Event on the hub copy.
+- **Rejections:** if admission on the hub rejects a copy (a webhook or a ValidatingAdmissionPolicy, for example), the user's object gets a Warning Event with reason `AdmissionDenied` and the hub's message. If the type has a `status.conditions` list, it also gets an `Accepted=False` condition, which is removed once the hub accepts the copy. crsync retries on the next spec change and every 10 minutes.
 - **Status (hub → spoke)** is copied back; types without a status subresource are skipped. A finalizer keeps the spoke object until the hub copy is gone, and a deleted hub copy is recreated.
 - **Opt-in:** [write-back](#write-back) and [event replay](#event-replay).
 

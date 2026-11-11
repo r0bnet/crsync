@@ -102,7 +102,12 @@ func (r *crsyncFromHubReconciler) reconcile(ctx context.Context, req mcreconcile
 
 	// Copy the status from the hub copy onto the spoke source object and update
 	// the status subresource. Types without one answer NotFound and are skipped.
+	// Keep crsync's own Accepted condition: the hub copy knows nothing about it.
+	accepted := acceptedCondition(sourceObj)
 	sourceObj.Object["status"] = hubCopy.Object["status"]
+	if accepted != nil {
+		setAcceptedCondition(sourceObj, accepted)
+	}
 	err = spokeClient.Status().Update(ctx, sourceObj)
 	if apierrors.IsNotFound(err) {
 		logger.Info("source resource gone or its type has no status subresource, skipping status sync")

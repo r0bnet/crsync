@@ -2,12 +2,16 @@ package controller
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"maps"
+	"slices"
 	"time"
 
 	corev1 "k8s.io/api/core/v1"
+	eventsv1 "k8s.io/api/events/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
@@ -45,6 +49,13 @@ const (
 	FieldManager = "crsync"
 	// ReasonFieldConflict is the Event reason when a hub controller changed a field the spoke also sets.
 	ReasonFieldConflict = "FieldConflict"
+	// ReasonAdmissionDenied is the Event and condition reason on a spoke resource whose hub copy was rejected.
+	ReasonAdmissionDenied = "AdmissionDenied"
+	// ConditionAccepted is crsync's condition on a spoke resource; it is False while the hub copy is rejected.
+	ConditionAccepted = "Accepted"
+
+	// deniedRetryInterval is the slow retry for rejected resources, in case the hub's admission rules change.
+	deniedRetryInterval = 10 * time.Minute
 )
 
 // errHubCopyPending is returned by reconcileDeletion when the hub copy still exists
@@ -173,12 +184,158 @@ func (r *crsyncFromSpokeReconciler) Reconcile(ctx context.Context, req mcreconci
 		return ctrl.Result{}, err
 	}
 
-	if err = r.upsertHubCopy(ctx, sourceObj, clusterName, hubNS, req.Name); err != nil {
+	err = r.upsertHubCopy(ctx, sourceObj, clusterName, hubNS, req.Name)
+	if isAdmissionDenied(err) {
+		// Retrying won't help until the spec changes, which triggers a reconcile anyway.
+		logger.Info("hub copy rejected", "error", err.Error())
+		if reportErr := reportDenied(ctx, spokeClient, sourceObj, err); reportErr != nil {
+			return ctrl.Result{}, reportErr
+		}
+		return ctrl.Result{RequeueAfter: deniedRetryInterval}, nil
+	}
+	if err != nil {
+		return ctrl.Result{}, err
+	}
+
+	if err := updateAcceptedCondition(ctx, spokeClient, sourceObj, nil); err != nil {
 		return ctrl.Result{}, err
 	}
 
 	logger.Info("hub copy upserted successfully")
 	return ctrl.Result{}, nil
+}
+
+// isAdmissionDenied reports whether the hub rejected an apply: webhooks answer 403, policies and schema 422.
+// shortcut: a 403 from missing RBAC on the hub looks the same, split it if that ever confuses users.
+func isAdmissionDenied(err error) bool {
+	return apierrors.IsForbidden(err) || apierrors.IsInvalid(err)
+}
+
+// reportDenied tells the user why their resource was rejected: a Warning Event,
+// and an Accepted=False condition if the type's status can hold one.
+func reportDenied(ctx context.Context, spokeClient client.Client, source *unstructured.Unstructured, denied error) error {
+	msg := denied.Error()
+	var status apierrors.APIStatus
+	if errors.As(denied, &status) {
+		msg = status.Status().Message
+	}
+
+	err := spokeClient.Create(ctx, deniedEvent(source, msg))
+	if err != nil && !apierrors.IsAlreadyExists(err) {
+		return fmt.Errorf("record %s event on spoke: %w", ReasonAdmissionDenied, err)
+	}
+
+	return updateAcceptedCondition(ctx, spokeClient, source, map[string]any{
+		"type":               ConditionAccepted,
+		"status":             string(metav1.ConditionFalse),
+		"reason":             ReasonAdmissionDenied,
+		"message":            msg,
+		"observedGeneration": source.GetGeneration(),
+	})
+}
+
+// deniedEvent builds the Warning Event for a rejected spoke resource. Events are immutable,
+// so the name derives from generation and message: retries find it instead of repeating it.
+func deniedEvent(source *unstructured.Unstructured, note string) *eventsv1.Event {
+	sum := sha256.Sum256(fmt.Appendf(nil, "%s/%d/%s", source.GetUID(), source.GetGeneration(), note))
+	if len(note) > maxEventNoteLength {
+		note = note[:maxEventNoteLength]
+	}
+	return &eventsv1.Event{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      fmt.Sprintf("%s.%s", source.GetName(), hex.EncodeToString(sum[:])[:16]),
+			Namespace: source.GetNamespace(),
+		},
+		EventTime:           metav1.NowMicro(),
+		ReportingController: FieldManager,
+		ReportingInstance:   FieldManager,
+		Action:              "Apply",
+		Reason:              ReasonAdmissionDenied,
+		Type:                corev1.EventTypeWarning,
+		Note:                note,
+		Regarding: corev1.ObjectReference{
+			APIVersion: source.GetAPIVersion(),
+			Kind:       source.GetKind(),
+			Namespace:  source.GetNamespace(),
+			Name:       source.GetName(),
+			UID:        source.GetUID(),
+		},
+	}
+}
+
+// updateAcceptedCondition sets crsync's Accepted condition on the spoke resource, or removes it when cond is nil.
+// Types without a status subresource, or whose schema rejects the condition, only get the Event.
+func updateAcceptedCondition(ctx context.Context, spokeClient client.Client, obj *unstructured.Unstructured, cond map[string]any) error {
+	if !setAcceptedCondition(obj, cond) {
+		return nil
+	}
+	err := spokeClient.Status().Update(ctx, obj)
+	if apierrors.IsNotFound(err) || apierrors.IsInvalid(err) {
+		log.FromContext(ctx).V(1).Info("spoke resource can't hold the Accepted condition", "error", err.Error())
+		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("update %s condition on spoke: %w", ConditionAccepted, err)
+	}
+	return nil
+}
+
+// setAcceptedCondition replaces crsync's Accepted condition in status.conditions, or removes it when
+// cond is nil. It keeps lastTransitionTime while the status stays the same and reports whether obj changed.
+func setAcceptedCondition(obj *unstructured.Unstructured, cond map[string]any) bool {
+	if obj.Object["status"] == nil {
+		delete(obj.Object, "status") // "status: null" would block the nested accessors below
+	}
+	conditions, _, err := unstructured.NestedSlice(obj.Object, "status", "conditions")
+	if err != nil {
+		return false // conditions that aren't a list are the type's own business
+	}
+	old := acceptedCondition(obj)
+	if cond == nil && old == nil {
+		return false
+	}
+	if cond != nil && old != nil && sameCondition(old, cond) {
+		return false
+	}
+
+	if cond != nil && cond["lastTransitionTime"] == nil {
+		cond = maps.Clone(cond)
+		cond["lastTransitionTime"] = metav1.Now().UTC().Format(time.RFC3339)
+		if old != nil && old["status"] == cond["status"] && old["lastTransitionTime"] != nil {
+			cond["lastTransitionTime"] = old["lastTransitionTime"]
+		}
+	}
+
+	conditions = slices.DeleteFunc(conditions, isAcceptedCondition)
+	if cond != nil {
+		conditions = append(conditions, cond)
+	}
+	return unstructured.SetNestedSlice(obj.Object, conditions, "status", "conditions") == nil
+}
+
+// acceptedCondition returns crsync's Accepted condition from obj's status, or nil.
+func acceptedCondition(obj *unstructured.Unstructured) map[string]any {
+	conditions, _, _ := unstructured.NestedSlice(obj.Object, "status", "conditions")
+	i := slices.IndexFunc(conditions, isAcceptedCondition)
+	if i < 0 {
+		return nil
+	}
+	return conditions[i].(map[string]any)
+}
+
+func isAcceptedCondition(c any) bool {
+	m, ok := c.(map[string]any)
+	return ok && m["type"] == ConditionAccepted
+}
+
+// sameCondition compares two conditions, ignoring lastTransitionTime.
+func sameCondition(a, b map[string]any) bool {
+	for _, k := range []string{"status", "reason", "message", "observedGeneration"} {
+		if a[k] != b[k] {
+			return false
+		}
+	}
+	return true
 }
 
 // reconcileDeletion triggers removal of the hub copy and waits until it is fully gone
